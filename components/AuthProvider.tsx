@@ -1,11 +1,8 @@
-"use client"
-
-import type React from "react"
-import { createContext, useContext, useEffect, useState } from "react"
-import type { User } from "firebase/auth"
-import { doc, setDoc } from "firebase/firestore"
-import { getToken } from "firebase/messaging"
-import { auth, db, messaging } from "@/lib/firebase"
+import React, { createContext, useContext, useEffect, useState } from 'react'
+import { User } from 'firebase/auth'
+import { doc, setDoc } from 'firebase/firestore'
+import { getToken } from 'firebase/messaging'
+import { auth, db, messaging } from '@/lib/firebase'
 
 type AuthContextType = {
   user: User | null
@@ -27,10 +24,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (user) {
         try {
-          const token = await getToken(messaging, { vapidKey: "YOUR_VAPID_KEY" })
-          await setDoc(doc(db, "users", user.uid), { fcmToken: token }, { merge: true })
+          const token = await getToken(messaging, { vapidKey: 'YOUR_VAPID_KEY' })
+          await setDoc(doc(db, 'users', user.uid), { fcmToken: token }, { merge: true })
         } catch (error) {
-          console.error("Error getting FCM token:", error)
+          console.error('Error getting FCM token:', error)
         }
       }
     })
@@ -38,6 +35,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => unsubscribe()
   }, [])
 
-  return <AuthContext.Provider value={{ user, loading }}>{children}</AuthContext.Provider>
+  return (
+    <AuthContext.Provider value={{ user, loading }}>
+      {children}
+    </AuthContext.Provider>
+  )
 }
-

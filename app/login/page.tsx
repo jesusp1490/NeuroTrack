@@ -4,10 +4,12 @@ import { useState } from 'react'
 import { signInWithEmailAndPassword } from 'firebase/auth'
 import { auth } from '@/lib/firebase'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 
-export default function SignIn() {
+export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
   const router = useRouter()
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -16,14 +18,16 @@ export default function SignIn() {
       await signInWithEmailAndPassword(auth, email, password)
       router.push('/dashboard')
     } catch (error) {
-      console.error('Error signing in:', error)
+      console.error('Error logging in:', error)
+      setError('Failed to log in. Please check your credentials.')
     }
   }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-md w-full space-y-8">
-        <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">Sign in to your account</h2>
+        <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">Log in to your account</h2>
+        {error && <p className="text-red-500 text-center">{error}</p>}
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
           <input type="hidden" name="remember" value="true" />
           <div className="rounded-md shadow-sm -space-y-px">
@@ -62,10 +66,15 @@ export default function SignIn() {
               type="submit"
               className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
             >
-              Sign in
+              Log in
             </button>
           </div>
         </form>
+        <div className="text-center">
+          <Link href="/signup" className="font-medium text-indigo-600 hover:text-indigo-500">
+            {"Don't have an account? Sign up"}
+          </Link>
+        </div>
       </div>
     </div>
   )

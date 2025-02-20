@@ -1,10 +1,8 @@
-"use client"
-
-import { useState, useEffect } from "react"
-import { collection, query, where, getDocs } from "firebase/firestore"
-import { db } from "@/lib/firebase"
-import MaterialSelection from "./MaterialSelection"
-import { generateSurgeryPDF } from "@/utils/pdfGenerator"
+import { useState, useEffect } from 'react'
+import { collection, query, where, getDocs } from 'firebase/firestore'
+import { db } from '@/lib/firebase'
+import MaterialSelection from './MaterialSelection'
+import { generateSurgeryPDF } from '@/utils/pdfGenerator'
 
 type Surgery = {
   id: string
@@ -27,15 +25,15 @@ export default function AssignedSurgeries({ neurophysiologistId }: AssignedSurge
   useEffect(() => {
     const fetchAssignedSurgeries = async () => {
       const surgeriesQuery = query(
-        collection(db, "surgeries"),
-        where("neurophysiologistId", "==", neurophysiologistId),
-        where("date", ">=", new Date()),
+        collection(db, 'surgeries'),
+        where('neurophysiologistId', '==', neurophysiologistId),
+        where('date', '>=', new Date())
       )
       const surgeriesSnapshot = await getDocs(surgeriesQuery)
-      const surgeriesData = surgeriesSnapshot.docs.map((doc) => ({
+      const surgeriesData = surgeriesSnapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data(),
-        date: doc.data().date.toDate(),
+        date: doc.data().date.toDate()
       })) as Surgery[]
       setSurgeries(surgeriesData)
     }
@@ -51,14 +49,13 @@ export default function AssignedSurgeries({ neurophysiologistId }: AssignedSurge
   }
 
   const handleGeneratePDF = (surgery: Surgery) => {
-    // In a real application, you would fetch additional details like hospital and operating room
     const surgeryDetails = {
       ...surgery,
-      surgeon: "Dr. John Doe", // This should be fetched from the database
-      neurophysiologist: "Dr. Jane Smith", // This should be fetched from the database
-      hospital: "General Hospital",
-      operatingRoom: "OR 1",
-      materials: ["Scalpel", "Forceps", "Retractor"], // This should be fetched from the database
+      surgeon: 'Dr. John Doe', // This should be fetched from the database
+      neurophysiologist: 'Dr. Jane Smith', // This should be fetched from the database
+      hospital: 'General Hospital',
+      operatingRoom: 'OR 1',
+      materials: ['Scalpel', 'Forceps', 'Retractor'], // This should be fetched from the database
     }
     generateSurgeryPDF(surgeryDetails)
   }
@@ -70,7 +67,7 @@ export default function AssignedSurgeries({ neurophysiologistId }: AssignedSurge
         <p>No assigned surgeries.</p>
       ) : (
         <ul className="space-y-4">
-          {surgeries.map((surgery) => (
+          {surgeries.map(surgery => (
             <li key={surgery.id} className="bg-white shadow rounded-lg p-4">
               <p className="font-semibold">{surgery.type}</p>
               <p>Date: {surgery.date.toDateString()}</p>
@@ -96,11 +93,13 @@ export default function AssignedSurgeries({ neurophysiologistId }: AssignedSurge
       {selectedSurgeryId && (
         <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full">
           <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
-            <MaterialSelection surgeryId={selectedSurgeryId} onClose={handleCloseMaterialSelection} />
+            <MaterialSelection
+              surgeryId={selectedSurgeryId}
+              onClose={handleCloseMaterialSelection}
+            />
           </div>
         </div>
       )}
     </div>
   )
 }
-

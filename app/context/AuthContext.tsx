@@ -1,46 +1,45 @@
 "use client"
 
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import { onAuthStateChanged, User } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
-import { auth, db } from '@/lib/firebase';
+import type React from "react"
+import { createContext, useContext, useEffect, useState } from "react"
+import type { User } from "firebase/auth"
+import { doc, getDoc } from "firebase/firestore"
+import { auth, db } from "@/lib/firebase"
 
-type UserRole = 'Cirujano' | 'Neurofisiologo'
+type UserRole = "Cirujano" | "Neurofisiologo" | null
 
 type AuthContextType = {
-  user: User | null;
-  userRole: UserRole | null;
-};
+  user: User | null
+  userRole: UserRole
+  loading: boolean
+}
 
-const AuthContext = createContext<AuthContextType>({ user: null, userRole: null });
+const AuthContext = createContext<AuthContextType>({ user: null, userRole: null, loading: true })
 
-export const useAuth = () => useContext(AuthContext);
+export const useAuth = () => useContext(AuthContext)
 
-export const AuthContextProvider = ({ children }: { children: React.ReactNode }) => {
-  const [user, setUser] = useState<User | null>(null);
-  const [userRole, setUserRole] = useState<UserRole | null>(null);
-  const [loading, setLoading] = useState(true);
+export const AuthContextProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [user, setUser] = useState<User | null>(null)
+  const [userRole, setUserRole] = useState<UserRole>(null)
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setUser(user);
+    const unsubscribe = auth.onAuthStateChanged(async (user) => {
+      setUser(user)
       if (user) {
-        const userDoc = await getDoc(doc(db, 'users', user.uid));
+        const userDoc = await getDoc(doc(db, "users", user.uid))
         if (userDoc.exists()) {
-          setUserRole(userDoc.data().role as UserRole);
+          setUserRole(userDoc.data().role as UserRole)
         }
       } else {
-        setUserRole(null);
+        setUserRole(null)
       }
-      setLoading(false);
-    });
+      setLoading(false)
+    })
 
-    return () => unsubscribe();
-  }, []);
+    return () => unsubscribe()
+  }, [])
 
-  return (
-    <AuthContext.Provider value={{ user, userRole }}>
-      {loading ? <div>Loading...</div> : children}
-    </AuthContext.Provider>
-  );
-};
+  return <AuthContext.Provider value={{ user, userRole, loading }}>{children}</AuthContext.Provider>
+}
+

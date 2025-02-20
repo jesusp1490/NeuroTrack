@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Firebase service account key
+/config/neurotrack-c6193-firebase-adminsdk-fbsvc-e8e690c796.json

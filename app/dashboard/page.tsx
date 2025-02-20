@@ -4,6 +4,7 @@ import { useEffect } from "react"
 import { useAuth } from "@/app/context/AuthContext"
 import { useRouter } from "next/navigation"
 import OperatingRoomCalendar from "@/components/OperatingRoomCalendar"
+import AssignedSurgeries from "@/components/AssignedSurgeries"
 import { CalendarDays, LogOut, Menu, Settings, User } from "lucide-react"
 import {
   DropdownMenu,
@@ -54,7 +55,7 @@ export default function Dashboard() {
         <div className="flex h-16 items-center justify-between px-4 sm:px-6 lg:px-8">
           <div className="flex items-center">
             <button className="lg:hidden -m-2.5 inline-flex items-center justify-center rounded-md p-2.5 text-gray-700">
-              <span className="sr-only">Open sidebar</span>
+              <span className="sr-only">Abrir menú</span>
               <Menu className="h-6 w-6" aria-hidden="true" />
             </button>
             <div className="ml-4 lg:ml-0">
@@ -75,27 +76,27 @@ export default function Dashboard() {
                   <div className="flex flex-col space-y-1">
                     <p className="text-sm font-medium leading-none">{user.email}</p>
                     <p className="text-xs leading-none text-muted-foreground">
-                      {userRole?.charAt(0).toUpperCase() + userRole?.slice(1)}
+                      {userRole === "cirujano" ? "Cirujano" : "Neurofisiólogo"}
                     </p>
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem>
                   <User className="mr-2 h-4 w-4" />
-                  <span>Profile</span>
+                  <span>Perfil</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem>
                   <CalendarDays className="mr-2 h-4 w-4" />
-                  <span>Calendar</span>
+                  <span>Calendario</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem>
                   <Settings className="mr-2 h-4 w-4" />
-                  <span>Settings</span>
+                  <span>Configuración</span>
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem className="text-red-600" onClick={handleLogout}>
                   <LogOut className="mr-2 h-4 w-4" />
-                  <span>Log out</span>
+                  <span>Cerrar sesión</span>
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -116,11 +117,11 @@ export default function Dashboard() {
                   </div>
                 </div>
                 <div className="ml-5">
-                  <h3 className="text-lg font-medium leading-6 text-gray-900">Welcome back!</h3>
+                  <h3 className="text-lg font-medium leading-6 text-gray-900">¡Bienvenido de nuevo!</h3>
                   <div className="mt-1 flex items-center">
-                    <p className="text-sm text-gray-500">Signed in as {user.email}</p>
+                    <p className="text-sm text-gray-500">Sesión iniciada como {user.email}</p>
                     <span className="ml-2 inline-flex items-center rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
-                      {userRole?.charAt(0).toUpperCase() + userRole?.slice(1)}
+                      {userRole === "cirujano" ? "Cirujano" : "Neurofisiólogo"}
                     </span>
                   </div>
                 </div>
@@ -131,8 +132,10 @@ export default function Dashboard() {
           {userRole === "cirujano" && (
             <div className="overflow-hidden rounded-lg bg-white shadow">
               <div className="p-6">
-                <h2 className="text-base font-semibold leading-7 text-gray-900">Operating Room Bookings</h2>
-                <p className="mt-1 text-sm leading-6 text-gray-500">Select a time slot to book an operating room.</p>
+                <h2 className="text-base font-semibold leading-7 text-gray-900">Reservas de Quirófano</h2>
+                <p className="mt-1 text-sm leading-6 text-gray-500">
+                  Seleccione un horario para reservar un quirófano.
+                </p>
                 <div className="mt-6">
                   <OperatingRoomCalendar />
                 </div>
@@ -143,9 +146,11 @@ export default function Dashboard() {
           {userRole === "neurofisiologo" && (
             <div className="overflow-hidden rounded-lg bg-white shadow">
               <div className="p-6">
-                <h2 className="text-base font-semibold leading-7 text-gray-900">Assigned Surgeries</h2>
-                <p className="mt-1 text-sm leading-6 text-gray-500">View and manage your assigned surgeries.</p>
-                {/* Add AssignedSurgeries component here */}
+                <h2 className="text-base font-semibold leading-7 text-gray-900">Cirugías Asignadas</h2>
+                <p className="mt-1 text-sm leading-6 text-gray-500">Ver y gestionar sus cirugías asignadas.</p>
+                <div className="mt-6">
+                  <AssignedSurgeries />
+                </div>
               </div>
             </div>
           )}

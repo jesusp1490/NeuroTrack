@@ -7,7 +7,7 @@ const inter = Inter({ subsets: ["latin"] })
 
 export const metadata = {
   title: "NeuroTrack",
-  description: "A web-based scheduling tool for operating room reservations",
+  description: "Operating Room Scheduling System",
 }
 
 export default function RootLayout({

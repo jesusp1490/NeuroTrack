@@ -2,10 +2,13 @@
 
 import type React from "react"
 import { useState, useEffect } from "react"
-import { format, startOfWeek, addDays, isSameDay } from "date-fns"
+import { format, startOfWeek, addDays, isSameDay, isToday } from "date-fns"
 import { collection, query, where, getDocs, addDoc, Timestamp } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import { useAuth } from "@/app/context/AuthContext"
+import { Button } from "@/components/ui/button"
+import { Calendar, ChevronLeft, ChevronRight } from "lucide-react"
+import { cn } from "@/lib/utils"
 
 type Room = {
   id: string
@@ -100,30 +103,34 @@ const OperatingRoomCalendar: React.FC = () => {
   }
 
   if (loading) {
-    return <div>Loading calendar...</div>
+    return (
+      <div className="flex items-center justify-center py-8">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      </div>
+    )
   }
 
   if (rooms.length === 0) {
-    return <div>No operating rooms available.</div>
+    return (
+      <div className="flex flex-col items-center justify-center py-8 text-center">
+        <Calendar className="h-8 w-8 text-gray-400" />
+        <h3 className="mt-2 text-sm font-medium text-gray-900">No operating rooms</h3>
+        <p className="mt-1 text-sm text-gray-500">No operating rooms are currently available.</p>
+      </div>
+    )
   }
 
   const renderHeader = () => {
     const dateFormat = "MMMM yyyy"
     return (
-      <div className="flex justify-between items-center mb-6">
-        <button
-          onClick={() => setCurrentDate(addDays(currentDate, -7))}
-          className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-        >
-          Previous Week
-        </button>
-        <span className="text-xl font-semibold">{format(currentDate, dateFormat)}</span>
-        <button
-          onClick={() => setCurrentDate(addDays(currentDate, 7))}
-          className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-        >
-          Next Week
-        </button>
+      <div className="flex items-center justify-between pb-4 pt-2">
+        <Button variant="outline" size="icon" onClick={() => setCurrentDate(addDays(currentDate, -7))}>
+          <ChevronLeft className="h-4 w-4" />
+        </Button>
+        <h2 className="text-lg font-semibold text-gray-900">{format(currentDate, dateFormat)}</h2>
+        <Button variant="outline" size="icon" onClick={() => setCurrentDate(addDays(currentDate, 7))}>
+          <ChevronRight className="h-4 w-4" />
+        </Button>
       </div>
     )
   }
@@ -134,53 +141,62 @@ const OperatingRoomCalendar: React.FC = () => {
     const startDate = startOfWeek(currentDate)
 
     for (let i = 0; i < 7; i++) {
+      const day = addDays(startDate, i)
       days.push(
-        <div key={i} className="text-center font-semibold p-2 bg-gray-50 border-b">
-          {format(addDays(startDate, i), dateFormat)}
+        <div key={i} className={cn("py-3 text-sm font-medium text-center border-b", isToday(day) && "bg-primary/5")}>
+          {format(day, dateFormat)}
         </div>,
       )
     }
 
-    return <div className="grid grid-cols-7 gap-px mb-px">{days}</div>
+    return <div className="grid grid-cols-7 divide-x">{days}</div>
   }
 
   const renderCells = () => {
     const startDate = startOfWeek(currentDate)
-    const endDate = addDays(startDate, 7)
     const rows = rooms.map((room) => {
       const cells = []
       let day = startDate
-      while (day < endDate) {
-        const isBooked = bookings.some((booking) => booking.roomId === room.id && isSameDay(booking.date, day))
+      for (let i = 0; i < 7; i++) {
+        const currentDay = addDays(day, i)
+        const isBooked = bookings.some((booking) => booking.roomId === room.id && isSameDay(booking.date, currentDay))
         cells.push(
-          <div key={day.toString()} className="border p-4 text-center">
+          <div
+            key={currentDay.toString()}
+            className={cn("p-2 text-center border-b border-r h-24", isToday(currentDay) && "bg-primary/5")}
+          >
             {isBooked ? (
-              <span className="inline-block px-2 py-1 text-red-700 bg-red-100 rounded-full text-sm">Booked</span>
+              <span className="inline-flex items-center rounded-md bg-red-50 px-2 py-1 text-xs font-medium text-red-700 ring-1 ring-inset ring-red-600/10">
+                Booked
+              </span>
             ) : (
-              <button
-                onClick={() => handleBookRoom(room.id, day)}
-                className="inline-block px-3 py-1 bg-green-600 text-white rounded-md text-sm hover:bg-green-700 transition-colors"
-              >
+              <Button onClick={() => handleBookRoom(room.id, currentDay)} variant="outline" className="w-full">
                 Book
-              </button>
+              </Button>
             )}
           </div>,
         )
-        day = addDays(day, 1)
+        day = currentDay
       }
       return (
         <div key={room.id} className="contents">
-          <div className="bg-gray-50 p-4 font-medium border-r">{room.name}</div>
+          <div className="bg-gray-50 p-4 font-medium border-b border-r">{room.name}</div>
           {cells}
         </div>
       )
     })
 
     return (
-      <div className="grid grid-cols-[auto_1fr_1fr_1fr_1fr_1fr_1fr_1fr] gap-px bg-gray-200">
-        <div className="bg-gray-50 p-4 font-semibold border-r">Room</div>
+      <div className="grid grid-cols-[auto_1fr_1fr_1fr_1fr_1fr_1fr_1fr] divide-x">
+        <div className="bg-gray-50 p-4 font-semibold border-b border-r">Room</div>
         {Array.from({ length: 7 }).map((_, i) => (
-          <div key={i} className="bg-gray-50 p-4 font-semibold text-center">
+          <div
+            key={i}
+            className={cn(
+              "bg-gray-50 p-4 font-semibold text-center border-b border-r",
+              isToday(addDays(startDate, i)) && "bg-primary/5",
+            )}
+          >
             {format(addDays(startDate, i), "dd")}
           </div>
         ))}
@@ -190,9 +206,9 @@ const OperatingRoomCalendar: React.FC = () => {
   }
 
   return (
-    <div className="w-full">
+    <div className="bg-white">
       {renderHeader()}
-      <div className="bg-white border rounded-lg overflow-hidden">
+      <div className="border rounded-lg overflow-hidden">
         {renderDays()}
         {renderCells()}
       </div>

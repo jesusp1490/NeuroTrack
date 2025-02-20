@@ -1,7 +1,8 @@
-import { initializeApp, getApps, type FirebaseOptions } from "firebase/app"
-import { getFirestore, connectFirestoreEmulator } from "firebase/firestore"
+import { initializeApp, getApps, type FirebaseApp } from "firebase/app"
+import { getAuth, type Auth } from "firebase/auth"
+import { getFirestore, type Firestore } from "firebase/firestore"
 
-const firebaseConfig: FirebaseOptions = {
+const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
   authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
   projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
@@ -11,24 +12,15 @@ const firebaseConfig: FirebaseOptions = {
   measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID,
 }
 
-// Initialize Firebase
-let app
-if (!getApps().length) {
-  try {
-    app = initializeApp(firebaseConfig)
-    console.log("Firebase initialized successfully")
-  } catch (error) {
-    console.error("Error initializing Firebase:", error)
-    throw error
-  }
-} else {
-  app = getApps()[0]
+let app: FirebaseApp
+let auth: Auth
+let db: Firestore
+
+if (typeof window !== "undefined" && !getApps().length) {
+  app = initializeApp(firebaseConfig)
+  auth = getAuth(app)
+  db = getFirestore(app)
 }
 
-export const db = getFirestore(app)
-
-// Use emulator if running locally
-if (process.env.NODE_ENV === "development") {
-  connectFirestoreEmulator(db, "localhost", 8080)
-}
+export { app, auth, db }
 

@@ -1,20 +1,21 @@
-"use client"
-
-import { useAuth } from './context/AuthContext'
-import { useRouter } from 'next/navigation'
-import { useEffect } from 'react'
+import Link from 'next/link'
 
 export default function Home() {
-  const { user } = useAuth()
-  const router = useRouter()
-
-  useEffect(() => {
-    if (user) {
-      router.push('/dashboard')
-    } else {
-      router.push('/signin')
-    }
-  }, [user, router])
-
-  return <div>Redirecting...</div>
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="text-center">
+        <h1 className="text-4xl font-bold mb-4">
+          Welcome to OR Reservation System
+        </h1>
+        <div className="space-x-4">
+          <Link href="/signup" className="text-blue-500 hover:underline">
+            Sign Up
+          </Link>
+          <Link href="/login" className="text-blue-500 hover:underline">
+            Log In
+          </Link>
+        </div>
+      </div>
+    </div>
+  )
 }

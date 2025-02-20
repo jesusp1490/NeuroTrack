@@ -1,44 +1,48 @@
 "use client"
 
-import { useState } from 'react'
-import { createUserWithEmailAndPassword } from 'firebase/auth'
-import { doc, setDoc } from 'firebase/firestore'
-import { auth, db } from '@/lib/firebase'
-import { useRouter } from 'next/navigation'
-import Link from 'next/link'
+import type React from "react"
 
-type UserRole = 'Cirujano' | 'Neurofisiologo'
+import { useState } from "react"
+import { createUserWithEmailAndPassword } from "firebase/auth"
+import { doc, setDoc, serverTimestamp } from "firebase/firestore"
+import { auth, db } from "@/lib/firebase"
+import { useRouter } from "next/navigation"
+import Link from "next/link"
+
+type UserRole = "cirujano" | "neurofisiologo"
 
 export default function SignUp() {
-  const [name, setName] = useState('')
-  const [lastName, setLastName] = useState('')
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [dob, setDob] = useState('')
-  const [role, setRole] = useState<UserRole>('Cirujano')
-  const [error, setError] = useState('')
+  const [name, setName] = useState("")
+  const [email, setEmail] = useState("")
+  const [password, setPassword] = useState("")
+  const [role, setRole] = useState<UserRole>("cirujano")
+  const [error, setError] = useState("")
   const router = useRouter()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    setError("")
     try {
       const userCredential = await createUserWithEmailAndPassword(auth, email, password)
       const user = userCredential.user
 
-      // Save additional user information to Firestore
-      await setDoc(doc(db, 'users', user.uid), {
+      // Save user data to Firestore
+      await setDoc(doc(db, "users", user.uid), {
         name,
-        lastName,
         email,
-        dob,
         role,
-        createdAt: new Date().toISOString()
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
       })
 
-      router.push('/dashboard')
+      router.push("/dashboard")
     } catch (error) {
-      console.error('Error signing up:', error)
-      setError('Failed to sign up. Please try again.')
+      console.error("Error signing up:", error)
+      if (error instanceof Error) {
+        setError(error.message)
+      } else {
+        setError("An unexpected error occurred. Please try again.")
+      }
     }
   }
 
@@ -50,7 +54,9 @@ export default function SignUp() {
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
           <div className="rounded-md shadow-sm -space-y-px">
             <div>
-              <label htmlFor="name" className="sr-only">Name</label>
+              <label htmlFor="name" className="sr-only">
+                Name
+              </label>
               <input
                 id="name"
                 name="name"
@@ -63,20 +69,9 @@ export default function SignUp() {
               />
             </div>
             <div>
-              <label htmlFor="lastName" className="sr-only">Last Name</label>
-              <input
-                id="lastName"
-                name="lastName"
-                type="text"
-                required
-                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 focus:z-10 sm:text-sm"
-                placeholder="Last Name"
-                value={lastName}
-                onChange={(e) => setLastName(e.target.value)}
-              />
-            </div>
-            <div>
-              <label htmlFor="email-address" className="sr-only">Email address</label>
+              <label htmlFor="email-address" className="sr-only">
+                Email address
+              </label>
               <input
                 id="email-address"
                 name="email"
@@ -90,7 +85,9 @@ export default function SignUp() {
               />
             </div>
             <div>
-              <label htmlFor="password" className="sr-only">Password</label>
+              <label htmlFor="password" className="sr-only">
+                Password
+              </label>
               <input
                 id="password"
                 name="password"
@@ -104,19 +101,9 @@ export default function SignUp() {
               />
             </div>
             <div>
-              <label htmlFor="dob" className="sr-only">Date of Birth</label>
-              <input
-                id="dob"
-                name="dob"
-                type="date"
-                required
-                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 focus:z-10 sm:text-sm"
-                value={dob}
-                onChange={(e) => setDob(e.target.value)}
-              />
-            </div>
-            <div>
-              <label htmlFor="role" className="sr-only">Role</label>
+              <label htmlFor="role" className="sr-only">
+                Role
+              </label>
               <select
                 id="role"
                 name="role"
@@ -125,8 +112,8 @@ export default function SignUp() {
                 value={role}
                 onChange={(e) => setRole(e.target.value as UserRole)}
               >
-                <option value="Cirujano">Cirujano</option>
-                <option value="Neurofisiologo">Neurofisiologo</option>
+                <option value="cirujano">Cirujano</option>
+                <option value="neurofisiologo">Neurofisiologo</option>
               </select>
             </div>
           </div>
@@ -149,3 +136,4 @@ export default function SignUp() {
     </div>
   )
 }
+

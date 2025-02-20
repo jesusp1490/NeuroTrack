@@ -121,13 +121,46 @@ const OperatingRoomCalendar: React.FC = () => {
     }
 
     try {
-      await addDoc(collection(db, "bookings"), {
+      // Fetch available neurophysiologists
+      const neurophysiologistsRef = collection(db, "users")
+      const neurophysiologistsQuery = query(neurophysiologistsRef, where("role", "==", "neurofisiologo"))
+      const neurophysiologistsSnapshot = await getDocs(neurophysiologistsQuery)
+      const availableNeurophysiologists = neurophysiologistsSnapshot.docs.map((doc) => doc.id)
+
+      if (availableNeurophysiologists.length === 0) {
+        toast({
+          title: "Error",
+          description: "No hay neurofisiólogos disponibles en este momento.",
+          variant: "destructive",
+        })
+        return
+      }
+
+      // Randomly assign a neurophysiologist
+      const assignedNeurophysiologistId =
+        availableNeurophysiologists[Math.floor(Math.random() * availableNeurophysiologists.length)]
+
+      // Create a booking
+      const bookingRef = await addDoc(collection(db, "bookings"), {
         roomId: selectedSlot.roomId,
         date: Timestamp.fromDate(selectedSlot.date),
         surgeonId: user.uid,
         surgeryType,
         estimatedDuration: Number.parseInt(estimatedDuration),
         createdAt: Timestamp.fromDate(new Date()),
+      })
+
+      // Create a surgery
+      await addDoc(collection(db, "surgeries"), {
+        bookingId: bookingRef.id,
+        roomId: selectedSlot.roomId,
+        date: Timestamp.fromDate(selectedSlot.date),
+        surgeonId: user.uid,
+        neurophysiologistId: assignedNeurophysiologistId,
+        surgeryType,
+        estimatedDuration: Number.parseInt(estimatedDuration),
+        createdAt: Timestamp.fromDate(new Date()),
+        status: "scheduled",
       })
 
       // Refresh bookings

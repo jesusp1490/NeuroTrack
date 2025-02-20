@@ -2,7 +2,7 @@
 
 import type React from "react"
 import { useState, useEffect } from "react"
-import { collection, query, where, getDocs, updateDoc, doc } from "firebase/firestore"
+import { collection, query, where, getDocs, updateDoc, doc, Timestamp } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import { useAuth } from "@/app/context/AuthContext"
 import { Button } from "@/components/ui/button"
@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/dialog"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { generateSurgeryPDF } from "@/utils/pdfGenerator"
+import { useToast } from "@/components/ui/use-toast"
 
 type Surgery = {
   id: string
@@ -39,6 +40,7 @@ const AssignedSurgeries: React.FC = () => {
   const [selectedSurgery, setSelectedSurgery] = useState<Surgery | null>(null)
   const [selectedMaterials, setSelectedMaterials] = useState<string[]>([])
   const { user } = useAuth()
+  const { toast } = useToast()
 
   const materials = [
     "Electrodos",
@@ -62,7 +64,7 @@ const AssignedSurgeries: React.FC = () => {
         const surgeriesQuery = query(
           surgeriesCollection,
           where("neurophysiologistId", "==", user.uid),
-          where("date", ">=", new Date()),
+          where("date", ">=", Timestamp.now()),
         )
         const surgeriesSnapshot = await getDocs(surgeriesQuery)
         const surgeriesList = surgeriesSnapshot.docs.map((doc) => ({
@@ -73,12 +75,17 @@ const AssignedSurgeries: React.FC = () => {
         setSurgeries(surgeriesList)
       } catch (error) {
         console.error("Error fetching surgeries:", error)
+        toast({
+          title: "Error",
+          description: "No se pudieron cargar las cirugías asignadas. Por favor, inténtelo de nuevo más tarde.",
+          variant: "destructive",
+        })
       }
       setLoading(false)
     }
 
     fetchSurgeries()
-  }, [user])
+  }, [user, toast])
 
   const handleMaterialSelection = (material: string) => {
     setSelectedMaterials((prev) => (prev.includes(material) ? prev.filter((m) => m !== material) : [...prev, material]))
@@ -97,8 +104,17 @@ const AssignedSurgeries: React.FC = () => {
       )
       setSelectedSurgery(null)
       setSelectedMaterials([])
+      toast({
+        title: "Éxito",
+        description: "Materiales actualizados correctamente.",
+      })
     } catch (error) {
       console.error("Error updating surgery materials:", error)
+      toast({
+        title: "Error",
+        description: "No se pudieron actualizar los materiales. Por favor, inténtelo de nuevo.",
+        variant: "destructive",
+      })
     }
   }
 

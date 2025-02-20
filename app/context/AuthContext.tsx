@@ -6,7 +6,7 @@ import type { User } from "firebase/auth"
 import { doc, getDoc } from "firebase/firestore"
 import { auth, db } from "@/lib/firebase"
 
-type UserRole = "Cirujano" | "Neurofisiologo" | null
+type UserRole = "cirujano" | "neurofisiologo" | "admin" | null
 
 type AuthContextType = {
   user: User | null

@@ -2,12 +2,13 @@ import type React from "react"
 import "./globals.css"
 import { Inter } from "next/font/google"
 import { AuthContextProvider } from "./context/AuthContext"
+import { Toaster } from "@/components/ui/toaster"
 
 const inter = Inter({ subsets: ["latin"] })
 
 export const metadata = {
   title: "NeuroTrack",
-  description: "A web-based scheduling tool for operating room reservations",
+  description: "Sistema de Programación de Quirófanos",
 }
 
 export default function RootLayout({
@@ -16,9 +17,12 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en">
+    <html lang="es">
       <body className={inter.className}>
-        <AuthContextProvider>{children}</AuthContextProvider>
+        <AuthContextProvider>
+          {children}
+          <Toaster />
+        </AuthContextProvider>
       </body>
     </html>
   )

@@ -2,10 +2,26 @@
 
 import type React from "react"
 import { useState, useEffect } from "react"
-import { format, startOfWeek, addDays, isSameDay } from "date-fns"
+import { format, startOfWeek, addDays, isSameDay, isToday } from "date-fns"
+import { es } from "date-fns/locale"
 import { collection, query, where, getDocs, addDoc, Timestamp } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import { useAuth } from "@/app/context/AuthContext"
+import { Button } from "@/components/ui/button"
+import { Calendar, ChevronLeft, ChevronRight } from "lucide-react"
+import { cn } from "@/lib/utils"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { useToast } from "@/components/ui/use-toast"
 
 type Room = {
   id: string
@@ -17,6 +33,8 @@ type Booking = {
   roomId: string
   date: Date
   surgeonId: string
+  surgeryType: string
+  estimatedDuration: number
 }
 
 const OperatingRoomCalendar: React.FC = () => {
@@ -24,7 +42,12 @@ const OperatingRoomCalendar: React.FC = () => {
   const [rooms, setRooms] = useState<Room[]>([])
   const [bookings, setBookings] = useState<Booking[]>([])
   const [loading, setLoading] = useState(true)
+  const [selectedSlot, setSelectedSlot] = useState<{ roomId: string; date: Date } | null>(null)
+  const [surgeryType, setSurgeryType] = useState("")
+  const [estimatedDuration, setEstimatedDuration] = useState("")
+  const [isDialogOpen, setIsDialogOpen] = useState(false)
   const { user } = useAuth()
+  const { toast } = useToast()
 
   useEffect(() => {
     const fetchData = async () => {
@@ -57,24 +80,53 @@ const OperatingRoomCalendar: React.FC = () => {
         setBookings(bookingsList)
       } catch (error) {
         console.error("Error fetching data:", error)
+        toast({
+          title: "Error",
+          description: "No se pudieron cargar los datos. Por favor, inténtelo de nuevo más tarde.",
+          variant: "destructive",
+        })
       }
       setLoading(false)
     }
 
     fetchData()
-  }, [currentDate])
+  }, [currentDate, toast])
 
-  const handleBookRoom = async (roomId: string, date: Date) => {
+  const handleBookRoom = async () => {
     if (!user) {
-      console.error("User not authenticated")
+      toast({
+        title: "Error",
+        description: "Debe iniciar sesión para reservar un quirófano.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    if (!selectedSlot) {
+      toast({
+        title: "Error",
+        description: "Por favor, seleccione un horario para reservar.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    if (!surgeryType || !estimatedDuration) {
+      toast({
+        title: "Error",
+        description: "Por favor, complete todos los campos del formulario.",
+        variant: "destructive",
+      })
       return
     }
 
     try {
       await addDoc(collection(db, "bookings"), {
-        roomId,
-        date: Timestamp.fromDate(date),
+        roomId: selectedSlot.roomId,
+        date: Timestamp.fromDate(selectedSlot.date),
         surgeonId: user.uid,
+        surgeryType,
+        estimatedDuration: Number.parseInt(estimatedDuration),
         createdAt: Timestamp.fromDate(new Date()),
       })
 
@@ -94,36 +146,56 @@ const OperatingRoomCalendar: React.FC = () => {
         date: doc.data().date.toDate(),
       })) as Booking[]
       setBookings(bookingsList)
+
+      // Reset form
+      setSelectedSlot(null)
+      setSurgeryType("")
+      setEstimatedDuration("")
+      setIsDialogOpen(false)
+
+      toast({
+        title: "Éxito",
+        description: "Quirófano reservado correctamente.",
+      })
     } catch (error) {
       console.error("Error booking room:", error)
+      toast({
+        title: "Error",
+        description: "No se pudo reservar el quirófano. Por favor, inténtelo de nuevo.",
+        variant: "destructive",
+      })
     }
   }
 
   if (loading) {
-    return <div>Loading calendar...</div>
+    return (
+      <div className="flex items-center justify-center py-8">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      </div>
+    )
   }
 
   if (rooms.length === 0) {
-    return <div>No operating rooms available.</div>
+    return (
+      <div className="flex flex-col items-center justify-center py-8 text-center">
+        <Calendar className="h-8 w-8 text-gray-400" />
+        <h3 className="mt-2 text-sm font-medium text-gray-900">No hay quirófanos disponibles</h3>
+        <p className="mt-1 text-sm text-gray-500">No hay quirófanos disponibles en este momento.</p>
+      </div>
+    )
   }
 
   const renderHeader = () => {
     const dateFormat = "MMMM yyyy"
     return (
-      <div className="flex justify-between items-center mb-6">
-        <button
-          onClick={() => setCurrentDate(addDays(currentDate, -7))}
-          className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-        >
-          Previous Week
-        </button>
-        <span className="text-xl font-semibold">{format(currentDate, dateFormat)}</span>
-        <button
-          onClick={() => setCurrentDate(addDays(currentDate, 7))}
-          className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-        >
-          Next Week
-        </button>
+      <div className="flex items-center justify-between pb-4 pt-2">
+        <Button variant="outline" size="icon" onClick={() => setCurrentDate(addDays(currentDate, -7))}>
+          <ChevronLeft className="h-4 w-4" />
+        </Button>
+        <h2 className="text-lg font-semibold text-gray-900">{format(currentDate, dateFormat, { locale: es })}</h2>
+        <Button variant="outline" size="icon" onClick={() => setCurrentDate(addDays(currentDate, 7))}>
+          <ChevronRight className="h-4 w-4" />
+        </Button>
       </div>
     )
   }
@@ -134,54 +206,109 @@ const OperatingRoomCalendar: React.FC = () => {
     const startDate = startOfWeek(currentDate)
 
     for (let i = 0; i < 7; i++) {
+      const day = addDays(startDate, i)
       days.push(
-        <div key={i} className="text-center font-semibold p-2 bg-gray-50 border-b">
-          {format(addDays(startDate, i), dateFormat)}
+        <div key={i} className={cn("py-3 text-sm font-medium text-center border-b", isToday(day) && "bg-primary/5")}>
+          {format(day, dateFormat, { locale: es })}
         </div>,
       )
     }
 
-    return <div className="grid grid-cols-7 gap-px mb-px">{days}</div>
+    return <div className="grid grid-cols-7 divide-x">{days}</div>
   }
 
   const renderCells = () => {
     const startDate = startOfWeek(currentDate)
-    const endDate = addDays(startDate, 7)
     const rows = rooms.map((room) => {
       const cells = []
       let day = startDate
-      while (day < endDate) {
-        const isBooked = bookings.some((booking) => booking.roomId === room.id && isSameDay(booking.date, day))
+      for (let i = 0; i < 7; i++) {
+        const currentDay = addDays(day, i)
+        const isBooked = bookings.some((booking) => booking.roomId === room.id && isSameDay(booking.date, currentDay))
         cells.push(
-          <div key={day.toString()} className="border p-4 text-center">
+          <div
+            key={currentDay.toString()}
+            className={cn("p-2 text-center border-b border-r h-24", isToday(currentDay) && "bg-primary/5")}
+          >
             {isBooked ? (
-              <span className="inline-block px-2 py-1 text-red-700 bg-red-100 rounded-full text-sm">Booked</span>
+              <span className="inline-flex items-center rounded-md bg-red-50 px-2 py-1 text-xs font-medium text-red-700 ring-1 ring-inset ring-red-600/10">
+                Reservado
+              </span>
             ) : (
-              <button
-                onClick={() => handleBookRoom(room.id, day)}
-                className="inline-block px-3 py-1 bg-green-600 text-white rounded-md text-sm hover:bg-green-700 transition-colors"
-              >
-                Book
-              </button>
+              <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button
+                    onClick={() => setSelectedSlot({ roomId: room.id, date: currentDay })}
+                    variant="outline"
+                    className="w-full"
+                  >
+                    Reservar
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="sm:max-w-[425px]">
+                  <DialogHeader>
+                    <DialogTitle>Reservar Quirófano</DialogTitle>
+                    <DialogDescription>
+                      Complete los detalles de la cirugía para reservar el quirófano.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="grid gap-4 py-4">
+                    <div className="grid grid-cols-4 items-center gap-4">
+                      <Label htmlFor="surgeryType" className="text-right">
+                        Tipo de Cirugía
+                      </Label>
+                      <Input
+                        id="surgeryType"
+                        value={surgeryType}
+                        onChange={(e) => setSurgeryType(e.target.value)}
+                        className="col-span-3"
+                      />
+                    </div>
+                    <div className="grid grid-cols-4 items-center gap-4">
+                      <Label htmlFor="estimatedDuration" className="text-right">
+                        Duración Estimada (min)
+                      </Label>
+                      <Input
+                        id="estimatedDuration"
+                        type="number"
+                        value={estimatedDuration}
+                        onChange={(e) => setEstimatedDuration(e.target.value)}
+                        className="col-span-3"
+                      />
+                    </div>
+                  </div>
+                  <DialogFooter>
+                    <Button type="submit" onClick={handleBookRoom}>
+                      Confirmar Reserva
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
             )}
           </div>,
         )
-        day = addDays(day, 1)
+        day = currentDay
       }
       return (
         <div key={room.id} className="contents">
-          <div className="bg-gray-50 p-4 font-medium border-r">{room.name}</div>
+          <div className="bg-gray-50 p-4 font-medium border-b border-r">{room.name}</div>
           {cells}
         </div>
       )
     })
 
     return (
-      <div className="grid grid-cols-[auto_1fr_1fr_1fr_1fr_1fr_1fr_1fr] gap-px bg-gray-200">
-        <div className="bg-gray-50 p-4 font-semibold border-r">Room</div>
+      <div className="grid grid-cols-[auto_1fr_1fr_1fr_1fr_1fr_1fr_1fr] divide-x">
+        <div className="bg-gray-50 p-4 font-semibold border-b border-r">Quirófano</div>
         {Array.from({ length: 7 }).map((_, i) => (
-          <div key={i} className="bg-gray-50 p-4 font-semibold text-center">
-            {format(addDays(startDate, i), "dd")}
+          <div
+            key={i}
+            className={cn(
+              "bg-gray-50 p-4 font-semibold text-center border-b border-r",
+              isToday(addDays(startDate, i)) && "bg-primary/5",
+            )}
+          >
+            {format(addDays(startDate, i), "dd", { locale: es })}
           </div>
         ))}
         {rows}
@@ -190,9 +317,9 @@ const OperatingRoomCalendar: React.FC = () => {
   }
 
   return (
-    <div className="w-full">
+    <div className="bg-white">
       {renderHeader()}
-      <div className="bg-white border rounded-lg overflow-hidden">
+      <div className="border rounded-lg overflow-hidden">
         {renderDays()}
         {renderCells()}
       </div>

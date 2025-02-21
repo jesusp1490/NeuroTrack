@@ -1,10 +1,10 @@
 "use client"
 
-import type React from "react"
-import { useState, useEffect } from "react"
+import React from "react"
+import { useState, useEffect, useCallback } from "react"
 import { format, startOfWeek, addDays, isSameDay, isToday } from "date-fns"
 import { es } from "date-fns/locale"
-import { collection, query, where, getDocs, addDoc, Timestamp } from "firebase/firestore"
+import { collection, query, where, getDocs, addDoc, Timestamp, deleteDoc, doc } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import { useAuth } from "@/app/context/AuthContext"
 import { Button } from "@/components/ui/button"
@@ -22,38 +22,64 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useToast } from "@/components/ui/use-toast"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Textarea } from "@/components/ui/textarea"
 
-type Room = {
+interface Room {
   id: string
   name: string
 }
 
-type Booking = {
+interface Booking {
   id: string
   roomId: string
   date: Date
   surgeonId: string
   surgeryType: string
   estimatedDuration: number
+  materials?: string[]
 }
 
-const OperatingRoomCalendar: React.FC = () => {
+interface OperatingRoomCalendarProps {
+  isAdmin?: boolean
+}
+
+const OperatingRoomCalendar: React.FC<OperatingRoomCalendarProps> = ({ isAdmin = false }) => {
   const [currentDate, setCurrentDate] = useState(new Date())
   const [rooms, setRooms] = useState<Room[]>([])
   const [bookings, setBookings] = useState<Booking[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedSlot, setSelectedSlot] = useState<{ roomId: string; date: Date } | null>(null)
+  const [selectedNeurophysiologists, setSelectedNeurophysiologists] = useState<string[]>([])
   const [surgeryType, setSurgeryType] = useState("")
   const [estimatedDuration, setEstimatedDuration] = useState("")
+  const [additionalNotes, setAdditionalNotes] = useState("")
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const { user } = useAuth()
   const { toast } = useToast()
+
+  const fetchBookings = useCallback(async () => {
+    const startDate = startOfWeek(currentDate)
+    const endDate = addDays(startDate, 7)
+    const bookingsCollection = collection(db, "bookings")
+    const bookingsQuery = query(
+      bookingsCollection,
+      where("date", ">=", Timestamp.fromDate(startDate)),
+      where("date", "<", Timestamp.fromDate(endDate)),
+    )
+    const bookingsSnapshot = await getDocs(bookingsQuery)
+    const bookingsList = bookingsSnapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+      date: doc.data().date.toDate(),
+    })) as Booking[]
+    setBookings(bookingsList)
+  }, [currentDate])
 
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true)
       try {
-        // Fetch rooms
         const roomsCollection = collection(db, "rooms")
         const roomsSnapshot = await getDocs(roomsCollection)
         const roomsList = roomsSnapshot.docs.map((doc) => ({
@@ -61,23 +87,7 @@ const OperatingRoomCalendar: React.FC = () => {
           name: doc.data().name,
         }))
         setRooms(roomsList)
-
-        // Fetch bookings
-        const startDate = startOfWeek(currentDate)
-        const endDate = addDays(startDate, 7)
-        const bookingsCollection = collection(db, "bookings")
-        const bookingsQuery = query(
-          bookingsCollection,
-          where("date", ">=", Timestamp.fromDate(startDate)),
-          where("date", "<", Timestamp.fromDate(endDate)),
-        )
-        const bookingsSnapshot = await getDocs(bookingsQuery)
-        const bookingsList = bookingsSnapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-          date: doc.data().date.toDate(),
-        })) as Booking[]
-        setBookings(bookingsList)
+        await fetchBookings()
       } catch (error) {
         console.error("Error fetching data:", error)
         toast({
@@ -90,10 +100,10 @@ const OperatingRoomCalendar: React.FC = () => {
     }
 
     fetchData()
-  }, [currentDate, toast])
+  }, [fetchBookings, toast])
 
   const handleBookRoom = async () => {
-    if (!user) {
+    if (!isAdmin && !user) {
       toast({
         title: "Error",
         description: "Debe iniciar sesión para reservar un quirófano.",
@@ -111,7 +121,7 @@ const OperatingRoomCalendar: React.FC = () => {
       return
     }
 
-    if (!surgeryType || !estimatedDuration) {
+    if (!surgeryType || !estimatedDuration || selectedNeurophysiologists.length === 0) {
       toast({
         title: "Error",
         description: "Por favor, complete todos los campos del formulario.",
@@ -121,80 +131,61 @@ const OperatingRoomCalendar: React.FC = () => {
     }
 
     try {
-      // Fetch available neurophysiologists
-      const neurophysiologistsRef = collection(db, "users")
-      const neurophysiologistsQuery = query(neurophysiologistsRef, where("role", "==", "neurofisiologo"))
-      const neurophysiologistsSnapshot = await getDocs(neurophysiologistsQuery)
-      const availableNeurophysiologists = neurophysiologistsSnapshot.docs.map((doc) => doc.id)
-
-      if (availableNeurophysiologists.length === 0) {
-        toast({
-          title: "Error",
-          description: "No hay neurofisiólogos disponibles en este momento.",
-          variant: "destructive",
-        })
-        return
+      const bookingData = {
+        roomId: selectedSlot.roomId,
+        date: Timestamp.fromDate(selectedSlot.date),
+        surgeonId: user?.uid || "anonymous",
+        surgeryType,
+        estimatedDuration: Number(estimatedDuration),
+        neurophysiologistIds: selectedNeurophysiologists,
+        additionalNotes,
+        createdAt: Timestamp.fromDate(new Date()),
       }
 
-      // Randomly assign a neurophysiologist
-      const assignedNeurophysiologistId =
-        availableNeurophysiologists[Math.floor(Math.random() * availableNeurophysiologists.length)]
+      const bookingRef = await addDoc(collection(db, "bookings"), bookingData)
 
-      // Create a booking
-      const bookingRef = await addDoc(collection(db, "bookings"), {
-        roomId: selectedSlot.roomId,
-        date: Timestamp.fromDate(selectedSlot.date),
-        surgeonId: user.uid,
-        surgeryType,
-        estimatedDuration: Number.parseInt(estimatedDuration),
-        createdAt: Timestamp.fromDate(new Date()),
-      })
-
-      // Create a surgery
       await addDoc(collection(db, "surgeries"), {
         bookingId: bookingRef.id,
-        roomId: selectedSlot.roomId,
-        date: Timestamp.fromDate(selectedSlot.date),
-        surgeonId: user.uid,
-        neurophysiologistId: assignedNeurophysiologistId,
-        surgeryType,
-        estimatedDuration: Number.parseInt(estimatedDuration),
-        createdAt: Timestamp.fromDate(new Date()),
+        ...bookingData,
         status: "scheduled",
       })
 
-      // Refresh bookings
-      const startDate = startOfWeek(currentDate)
-      const endDate = addDays(startDate, 7)
-      const bookingsCollection = collection(db, "bookings")
-      const bookingsQuery = query(
-        bookingsCollection,
-        where("date", ">=", Timestamp.fromDate(startDate)),
-        where("date", "<", Timestamp.fromDate(endDate)),
-      )
-      const bookingsSnapshot = await getDocs(bookingsQuery)
-      const bookingsList = bookingsSnapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-        date: doc.data().date.toDate(),
-      })) as Booking[]
-      setBookings(bookingsList)
-
-      // Reset form
       setSelectedSlot(null)
       setSurgeryType("")
       setEstimatedDuration("")
+      setSelectedNeurophysiologists([])
+      setAdditionalNotes("")
       setIsDialogOpen(false)
 
       toast({
         title: "Éxito",
         description: "Quirófano reservado correctamente.",
       })
+
+      await fetchBookings()
     } catch (error) {
       console.error("Error booking room:", error)
       toast({
         title: "Error",
         description: "No se pudo reservar el quirófano. Por favor, inténtelo de nuevo.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleCancelBooking = async (bookingId: string) => {
+    try {
+      await deleteDoc(doc(db, "bookings", bookingId))
+      toast({
+        title: "Éxito",
+        description: "Reserva cancelada correctamente.",
+      })
+      await fetchBookings()
+    } catch (error) {
+      console.error("Error cancelling booking:", error)
+      toast({
+        title: "Error",
+        description: "No se pudo cancelar la reserva. Por favor, inténtelo de nuevo.",
         variant: "destructive",
       })
     }
@@ -218,143 +209,170 @@ const OperatingRoomCalendar: React.FC = () => {
     )
   }
 
-  const renderHeader = () => {
-    const dateFormat = "MMMM yyyy"
-    return (
+  return (
+    <div className="bg-white">
       <div className="flex items-center justify-between pb-4 pt-2">
         <Button variant="outline" size="icon" onClick={() => setCurrentDate(addDays(currentDate, -7))}>
           <ChevronLeft className="h-4 w-4" />
         </Button>
-        <h2 className="text-lg font-semibold text-gray-900">{format(currentDate, dateFormat, { locale: es })}</h2>
+        <h2 className="text-lg font-semibold text-gray-900">{format(currentDate, "MMMM yyyy", { locale: es })}</h2>
         <Button variant="outline" size="icon" onClick={() => setCurrentDate(addDays(currentDate, 7))}>
           <ChevronRight className="h-4 w-4" />
         </Button>
       </div>
-    )
-  }
 
-  const renderDays = () => {
-    const dateFormat = "EEE dd/MM"
-    const days = []
-    const startDate = startOfWeek(currentDate)
-
-    for (let i = 0; i < 7; i++) {
-      const day = addDays(startDate, i)
-      days.push(
-        <div key={i} className={cn("py-3 text-sm font-medium text-center border-b", isToday(day) && "bg-primary/5")}>
-          {format(day, dateFormat, { locale: es })}
-        </div>,
-      )
-    }
-
-    return <div className="grid grid-cols-7 divide-x">{days}</div>
-  }
-
-  const renderCells = () => {
-    const startDate = startOfWeek(currentDate)
-    const rows = rooms.map((room) => {
-      const cells = []
-      let day = startDate
-      for (let i = 0; i < 7; i++) {
-        const currentDay = addDays(day, i)
-        const isBooked = bookings.some((booking) => booking.roomId === room.id && isSameDay(booking.date, currentDay))
-        cells.push(
-          <div
-            key={currentDay.toString()}
-            className={cn("p-2 text-center border-b border-r h-24", isToday(currentDay) && "bg-primary/5")}
-          >
-            {isBooked ? (
-              <span className="inline-flex items-center rounded-md bg-red-50 px-2 py-1 text-xs font-medium text-red-700 ring-1 ring-inset ring-red-600/10">
-                Reservado
-              </span>
-            ) : (
-              <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-                <DialogTrigger asChild>
-                  <Button
-                    onClick={() => setSelectedSlot({ roomId: room.id, date: currentDay })}
-                    variant="outline"
-                    className="w-full"
-                  >
-                    Reservar
-                  </Button>
-                </DialogTrigger>
-                <DialogContent className="sm:max-w-[425px]">
-                  <DialogHeader>
-                    <DialogTitle>Reservar Quirófano</DialogTitle>
-                    <DialogDescription>
-                      Complete los detalles de la cirugía para reservar el quirófano.
-                    </DialogDescription>
-                  </DialogHeader>
-                  <div className="grid gap-4 py-4">
-                    <div className="grid grid-cols-4 items-center gap-4">
-                      <Label htmlFor="surgeryType" className="text-right">
-                        Tipo de Cirugía
-                      </Label>
-                      <Input
-                        id="surgeryType"
-                        value={surgeryType}
-                        onChange={(e) => setSurgeryType(e.target.value)}
-                        className="col-span-3"
-                      />
-                    </div>
-                    <div className="grid grid-cols-4 items-center gap-4">
-                      <Label htmlFor="estimatedDuration" className="text-right">
-                        Duración Estimada (min)
-                      </Label>
-                      <Input
-                        id="estimatedDuration"
-                        type="number"
-                        value={estimatedDuration}
-                        onChange={(e) => setEstimatedDuration(e.target.value)}
-                        className="col-span-3"
-                      />
-                    </div>
-                  </div>
-                  <DialogFooter>
-                    <Button type="submit" onClick={handleBookRoom}>
-                      Confirmar Reserva
-                    </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
-            )}
-          </div>,
-        )
-        day = currentDay
-      }
-      return (
-        <div key={room.id} className="contents">
-          <div className="bg-gray-50 p-4 font-medium border-b border-r">{room.name}</div>
-          {cells}
-        </div>
-      )
-    })
-
-    return (
-      <div className="grid grid-cols-[auto_1fr_1fr_1fr_1fr_1fr_1fr_1fr] divide-x">
-        <div className="bg-gray-50 p-4 font-semibold border-b border-r">Quirófano</div>
-        {Array.from({ length: 7 }).map((_, i) => (
-          <div
-            key={i}
-            className={cn(
-              "bg-gray-50 p-4 font-semibold text-center border-b border-r",
-              isToday(addDays(startDate, i)) && "bg-primary/5",
-            )}
-          >
-            {format(addDays(startDate, i), "dd", { locale: es })}
-          </div>
-        ))}
-        {rows}
-      </div>
-    )
-  }
-
-  return (
-    <div className="bg-white">
-      {renderHeader()}
       <div className="border rounded-lg overflow-hidden">
-        {renderDays()}
-        {renderCells()}
+        <div className="grid grid-cols-7 divide-x">
+          {Array.from({ length: 7 }).map((_, i) => {
+            const day = addDays(startOfWeek(currentDate), i)
+            return (
+              <div
+                key={i}
+                className={cn("py-3 text-sm font-medium text-center border-b", isToday(day) && "bg-primary/5")}
+              >
+                {format(day, "EEE dd/MM", { locale: es })}
+              </div>
+            )
+          })}
+        </div>
+
+        <div className="grid grid-cols-[auto_1fr_1fr_1fr_1fr_1fr_1fr_1fr] divide-x">
+          <div className="bg-gray-50 p-4 font-semibold border-b border-r">Quirófano</div>
+          {Array.from({ length: 7 }).map((_, i) => (
+            <div
+              key={i}
+              className={cn(
+                "bg-gray-50 p-4 font-semibold text-center border-b border-r",
+                isToday(addDays(startOfWeek(currentDate), i)) && "bg-primary/5",
+              )}
+            >
+              {format(addDays(startOfWeek(currentDate), i), "dd", { locale: es })}
+            </div>
+          ))}
+
+          {rooms.map((room) => (
+            <React.Fragment key={room.id}>
+              <div className="bg-gray-50 p-4 font-medium border-b border-r">{room.name}</div>
+              {Array.from({ length: 7 }).map((_, i) => {
+                const currentDay = addDays(startOfWeek(currentDate), i)
+                const booking = bookings.find(
+                  (booking) => booking.roomId === room.id && isSameDay(booking.date, currentDay),
+                )
+                const isBooked = !!booking
+
+                return (
+                  <div
+                    key={i}
+                    className={cn("p-2 text-center border-b border-r h-24", isToday(currentDay) && "bg-primary/5")}
+                  >
+                    {isBooked ? (
+                      <div className="flex flex-col gap-2">
+                        <span className="inline-flex items-center rounded-md bg-red-50 px-2 py-1 text-xs font-medium text-red-700 ring-1 ring-inset ring-red-600/10">
+                          Reservado
+                        </span>
+                        {isAdmin && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="w-full"
+                            onClick={() => handleCancelBooking(booking.id)}
+                          >
+                            Cancelar
+                          </Button>
+                        )}
+                      </div>
+                    ) : (
+                      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+                        <DialogTrigger asChild>
+                          <Button
+                            onClick={() => setSelectedSlot({ roomId: room.id, date: currentDay })}
+                            variant="outline"
+                            className="w-full"
+                          >
+                            Reservar
+                          </Button>
+                        </DialogTrigger>
+                        <DialogContent className="sm:max-w-[425px]">
+                          <DialogHeader>
+                            <DialogTitle>Reservar Quirófano</DialogTitle>
+                            <DialogDescription>
+                              Complete los detalles de la cirugía para reservar el quirófano.
+                            </DialogDescription>
+                          </DialogHeader>
+                          <div className="grid gap-4 py-4">
+                            <div className="grid grid-cols-4 items-center gap-4">
+                              <Label htmlFor="surgeryType" className="text-right">
+                                Tipo de Cirugía
+                              </Label>
+                              <Select value={surgeryType} onValueChange={setSurgeryType}>
+                                <SelectTrigger className="col-span-3">
+                                  <SelectValue placeholder="Seleccione el tipo de cirugía" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="tipo1">Tipo 1</SelectItem>
+                                  <SelectItem value="tipo2">Tipo 2</SelectItem>
+                                  <SelectItem value="tipo3">Tipo 3</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="grid grid-cols-4 items-center gap-4">
+                              <Label htmlFor="estimatedDuration" className="text-right">
+                                Duración Estimada (min)
+                              </Label>
+                              <Input
+                                id="estimatedDuration"
+                                type="number"
+                                value={estimatedDuration}
+                                onChange={(e) => setEstimatedDuration(e.target.value)}
+                                className="col-span-3"
+                              />
+                            </div>
+                            <div className="grid grid-cols-4 items-center gap-4">
+                              <Label htmlFor="neurophysiologists" className="text-right">
+                                Neurofisiólogos
+                              </Label>
+                              <Select
+                                value={selectedNeurophysiologists.join(",")}
+                                onValueChange={(value) =>
+                                  setSelectedNeurophysiologists(value.split(",").filter(Boolean))
+                                }
+                              >
+                                <SelectTrigger className="col-span-3">
+                                  <SelectValue placeholder="Seleccione neurofisiólogos" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="neuro1">Neurofisiólogo 1</SelectItem>
+                                  <SelectItem value="neuro2">Neurofisiólogo 2</SelectItem>
+                                  <SelectItem value="neuro3">Neurofisiólogo 3</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="grid grid-cols-4 items-center gap-4">
+                              <Label htmlFor="additionalNotes" className="text-right">
+                                Notas Adicionales
+                              </Label>
+                              <Textarea
+                                id="additionalNotes"
+                                value={additionalNotes}
+                                onChange={(e) => setAdditionalNotes(e.target.value)}
+                                className="col-span-3"
+                              />
+                            </div>
+                          </div>
+                          <DialogFooter>
+                            <Button type="submit" onClick={handleBookRoom}>
+                              Confirmar Reserva
+                            </Button>
+                          </DialogFooter>
+                        </DialogContent>
+                      </Dialog>
+                    )}
+                  </div>
+                )
+              })}
+            </React.Fragment>
+          ))}
+        </div>
       </div>
     </div>
   )

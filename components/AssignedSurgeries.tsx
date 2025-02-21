@@ -1,6 +1,6 @@
 "use client"
 
-import type React from "react"
+import React from "react"
 import { useState, useEffect } from "react"
 import { collection, query, where, getDocs, updateDoc, doc, Timestamp } from "firebase/firestore"
 import { db } from "@/lib/firebase"
@@ -21,7 +21,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { generateSurgeryPDF } from "@/utils/pdfGenerator"
 import { useToast } from "@/components/ui/use-toast"
 
-type Surgery = {
+interface Surgery {
   id: string
   surgeryType: string
   date: Date
@@ -34,7 +34,11 @@ type Surgery = {
   operatingRoom: string
 }
 
-const AssignedSurgeries: React.FC = () => {
+interface AssignedSurgeriesProps {
+  isSurgeon?: boolean
+}
+
+const AssignedSurgeries: React.FC<AssignedSurgeriesProps> = ({ isSurgeon = false }) => {
   const [surgeries, setSurgeries] = useState<Surgery[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedSurgery, setSelectedSurgery] = useState<Surgery | null>(null)
@@ -61,9 +65,10 @@ const AssignedSurgeries: React.FC = () => {
       setLoading(true)
       try {
         const surgeriesCollection = collection(db, "surgeries")
+        const fieldToQuery = isSurgeon ? "surgeonId" : "neurophysiologistId"
         const surgeriesQuery = query(
           surgeriesCollection,
-          where("neurophysiologistId", "==", user.uid),
+          where(fieldToQuery, "==", user.uid),
           where("date", ">=", Timestamp.now()),
         )
         const surgeriesSnapshot = await getDocs(surgeriesQuery)
@@ -85,7 +90,7 @@ const AssignedSurgeries: React.FC = () => {
     }
 
     fetchSurgeries()
-  }, [user, toast])
+  }, [user, isSurgeon, toast])
 
   const handleMaterialSelection = (material: string) => {
     setSelectedMaterials((prev) => (prev.includes(material) ? prev.filter((m) => m !== material) : [...prev, material]))
@@ -123,8 +128,8 @@ const AssignedSurgeries: React.FC = () => {
       type: surgery.surgeryType,
       date: surgery.date,
       duration: surgery.estimatedDuration,
-      surgeon: "Dr. " + surgery.surgeonId, // You might want to fetch the actual surgeon name
-      neurophysiologist: "Dr. " + surgery.neurophysiologistId, // You might want to fetch the actual neurophysiologist name
+      surgeon: "Dr. " + surgery.surgeonId,
+      neurophysiologist: "Dr. " + surgery.neurophysiologistId,
       hospital: surgery.hospital || "Hospital General",
       operatingRoom: surgery.operatingRoom || "Quirófano 1",
       materials: surgery.materials || [],
@@ -155,34 +160,36 @@ const AssignedSurgeries: React.FC = () => {
             {surgery.materials && <p>Materiales seleccionados: {surgery.materials.join(", ")}</p>}
           </CardContent>
           <CardFooter className="justify-between">
-            <Dialog>
-              <DialogTrigger asChild>
-                <Button variant="outline" onClick={() => setSelectedSurgery(surgery)}>
-                  {surgery.materials ? "Editar Materiales" : "Seleccionar Materiales"}
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Seleccionar Materiales</DialogTitle>
-                  <DialogDescription>Elija los materiales necesarios para la cirugía.</DialogDescription>
-                </DialogHeader>
-                <ScrollArea className="h-[200px] w-full rounded-md border p-4">
-                  {materials.map((material) => (
-                    <div key={material} className="flex items-center space-x-2 mb-2">
-                      <Checkbox
-                        id={material}
-                        checked={selectedMaterials.includes(material)}
-                        onCheckedChange={() => handleMaterialSelection(material)}
-                      />
-                      <label htmlFor={material}>{material}</label>
-                    </div>
-                  ))}
-                </ScrollArea>
-                <DialogFooter>
-                  <Button onClick={handleMaterialSubmission}>Guardar Selección</Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
+            {!isSurgeon && (
+              <Dialog>
+                <DialogTrigger asChild>
+                  <Button variant="outline" onClick={() => setSelectedSurgery(surgery)}>
+                    {surgery.materials ? "Editar Materiales" : "Seleccionar Materiales"}
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Seleccionar Materiales</DialogTitle>
+                    <DialogDescription>Elija los materiales necesarios para la cirugía.</DialogDescription>
+                  </DialogHeader>
+                  <ScrollArea className="h-[200px] w-full rounded-md border p-4">
+                    {materials.map((material) => (
+                      <div key={material} className="flex items-center space-x-2 mb-2">
+                        <Checkbox
+                          id={material}
+                          checked={selectedMaterials.includes(material)}
+                          onCheckedChange={() => handleMaterialSelection(material)}
+                        />
+                        <label htmlFor={material}>{material}</label>
+                      </div>
+                    ))}
+                  </ScrollArea>
+                  <DialogFooter>
+                    <Button onClick={handleMaterialSubmission}>Guardar Selección</Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            )}
             <Button onClick={() => handleGeneratePDF(surgery)}>Generar Informe PDF</Button>
           </CardFooter>
         </Card>

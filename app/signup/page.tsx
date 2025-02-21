@@ -1,7 +1,6 @@
 "use client"
 
-import type React from "react"
-
+import { FormEvent } from "react"
 import { useState } from "react"
 import { createUserWithEmailAndPassword } from "firebase/auth"
 import { doc, setDoc, serverTimestamp } from "firebase/firestore"
@@ -13,18 +12,18 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/components/ui/use-toast"
+import { UserRole } from "@/app/context/AuthContext"
 
-type UserRole = "cirujano" | "neurofisiologo"
-
-export default function SignUp() {
+export default function SignUpPage() {
   const [name, setName] = useState("")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [role, setRole] = useState<UserRole>("cirujano")
+  const [hospital, setHospital] = useState("")
   const router = useRouter()
   const { toast } = useToast()
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
     try {
       const userCredential = await createUserWithEmailAndPassword(auth, email, password)
@@ -35,6 +34,7 @@ export default function SignUp() {
         name,
         email,
         role,
+        hospital: role === "cirujano" ? hospital : null,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       })
@@ -119,11 +119,30 @@ export default function SignUp() {
                   <SelectValue placeholder="Seleccione un rol" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="cirujano">Cirujano</SelectItem>
                   <SelectItem value="neurofisiologo">Neurofisiólogo</SelectItem>
+                  <SelectItem value="cirujano">Cirujano</SelectItem>
+                  <SelectItem value="administrativo">Personal Administrativo</SelectItem>
+                  <SelectItem value="jefe_departamento">Jefe de Departamento</SelectItem>
                 </SelectContent>
               </Select>
             </div>
+            {role === "cirujano" && (
+              <div>
+                <Label htmlFor="hospital" className="sr-only">
+                  Hospital
+                </Label>
+                <Select value={hospital} onValueChange={(value: string) => setHospital(value)}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Seleccione un hospital" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="hospital1">Hospital 1</SelectItem>
+                    <SelectItem value="hospital2">Hospital 2</SelectItem>
+                    <SelectItem value="hospital3">Hospital 3</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </div>
 
           <div>

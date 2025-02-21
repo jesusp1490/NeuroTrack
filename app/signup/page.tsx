@@ -1,9 +1,9 @@
 "use client"
 
-import { FormEvent } from "react"
-import { useState } from "react"
+import React from "react"
+import { useState, useEffect } from "react"
 import { createUserWithEmailAndPassword } from "firebase/auth"
-import { doc, setDoc, serverTimestamp } from "firebase/firestore"
+import { doc, setDoc, serverTimestamp, collection, getDocs } from "firebase/firestore"
 import { auth, db } from "@/lib/firebase"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
@@ -14,16 +14,33 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/components/ui/use-toast"
 import { UserRole } from "@/app/context/AuthContext"
 
+interface Hospital {
+  id: string
+  name: string
+}
+
 export default function SignUpPage() {
   const [name, setName] = useState("")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [role, setRole] = useState<UserRole>("cirujano")
   const [hospital, setHospital] = useState("")
+  const [hospitals, setHospitals] = useState<Hospital[]>([])
   const router = useRouter()
   const { toast } = useToast()
 
-  const handleSubmit = async (e: FormEvent) => {
+  useEffect(() => {
+    const fetchHospitals = async () => {
+      const hospitalsCollection = collection(db, "hospitals")
+      const hospitalsSnapshot = await getDocs(hospitalsCollection)
+      const hospitalsList = hospitalsSnapshot.docs.map((doc) => ({ id: doc.id, name: doc.data().name }))
+      setHospitals(hospitalsList)
+    }
+
+    fetchHospitals()
+  }, [])
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     try {
       const userCredential = await createUserWithEmailAndPassword(auth, email, password)
@@ -34,7 +51,7 @@ export default function SignUpPage() {
         name,
         email,
         role,
-        hospital: role === "cirujano" ? hospital : null,
+        hospitalId: hospital,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       })
@@ -126,23 +143,23 @@ export default function SignUpPage() {
                 </SelectContent>
               </Select>
             </div>
-            {role === "cirujano" && (
-              <div>
-                <Label htmlFor="hospital" className="sr-only">
-                  Hospital
-                </Label>
-                <Select value={hospital} onValueChange={(value: string) => setHospital(value)}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Seleccione un hospital" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="hospital1">Hospital 1</SelectItem>
-                    <SelectItem value="hospital2">Hospital 2</SelectItem>
-                    <SelectItem value="hospital3">Hospital 3</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
+            <div>
+              <Label htmlFor="hospital" className="sr-only">
+                Hospital
+              </Label>
+              <Select value={hospital} onValueChange={(value: string) => setHospital(value)}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Seleccione un hospital" />
+                </SelectTrigger>
+                <SelectContent>
+                  {hospitals.map((h) => (
+                    <SelectItem key={h.id} value={h.id}>
+                      {h.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
           <div>

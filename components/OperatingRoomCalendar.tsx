@@ -8,7 +8,7 @@ import { collection, query, where, getDocs, addDoc, Timestamp, deleteDoc, doc } 
 import { db } from "@/lib/firebase"
 import { useAuth } from "@/app/context/AuthContext"
 import { Button } from "@/components/ui/button"
-import { Calendar, ChevronLeft, ChevronRight } from "lucide-react"
+import { ChevronLeft, ChevronRight } from "lucide-react"
 import { cn } from "@/lib/utils"
 import {
   Dialog,
@@ -28,6 +28,7 @@ import { Textarea } from "@/components/ui/textarea"
 interface Room {
   id: string
   name: string
+  hospitalId: string
 }
 
 interface Booking {
@@ -37,7 +38,18 @@ interface Booking {
   surgeonId: string
   surgeryType: string
   estimatedDuration: number
+  neurophysiologistId: string
   materials?: string[]
+}
+
+interface Hospital {
+  id: string
+  name: string
+}
+
+interface Neurofisiologo {
+  id: string
+  name: string
 }
 
 interface OperatingRoomCalendarProps {
@@ -50,20 +62,25 @@ const OperatingRoomCalendar: React.FC<OperatingRoomCalendarProps> = ({ isAdmin =
   const [bookings, setBookings] = useState<Booking[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedSlot, setSelectedSlot] = useState<{ roomId: string; date: Date } | null>(null)
-  const [selectedNeurophysiologists, setSelectedNeurophysiologists] = useState<string[]>([])
+  const [selectedNeurofisiologos, setSelectedNeurofisiologos] = useState<string[]>([])
   const [surgeryType, setSurgeryType] = useState("")
   const [estimatedDuration, setEstimatedDuration] = useState("")
   const [additionalNotes, setAdditionalNotes] = useState("")
   const [isDialogOpen, setIsDialogOpen] = useState(false)
+  const [hospitals, setHospitals] = useState<Hospital[]>([])
+  const [selectedHospital, setSelectedHospital] = useState<string>("")
+  const [neurofisiologos, setNeurofisiologos] = useState<Neurofisiologo[]>([])
   const { user } = useAuth()
   const { toast } = useToast()
 
   const fetchBookings = useCallback(async () => {
+    if (!selectedHospital) return
     const startDate = startOfWeek(currentDate)
     const endDate = addDays(startDate, 7)
     const bookingsCollection = collection(db, "bookings")
     const bookingsQuery = query(
       bookingsCollection,
+      where("hospitalId", "==", selectedHospital),
       where("date", ">=", Timestamp.fromDate(startDate)),
       where("date", "<", Timestamp.fromDate(endDate)),
     )
@@ -74,20 +91,46 @@ const OperatingRoomCalendar: React.FC<OperatingRoomCalendarProps> = ({ isAdmin =
       date: doc.data().date.toDate(),
     })) as Booking[]
     setBookings(bookingsList)
-  }, [currentDate])
+  }, [currentDate, selectedHospital])
 
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true)
       try {
-        const roomsCollection = collection(db, "rooms")
-        const roomsSnapshot = await getDocs(roomsCollection)
-        const roomsList = roomsSnapshot.docs.map((doc) => ({
+        const hospitalsCollection = collection(db, "hospitals")
+        const hospitalsSnapshot = await getDocs(hospitalsCollection)
+        const hospitalsList = hospitalsSnapshot.docs.map((doc) => ({
           id: doc.id,
           name: doc.data().name,
         }))
-        setRooms(roomsList)
-        await fetchBookings()
+        setHospitals(hospitalsList)
+
+        if (selectedHospital) {
+          const roomsCollection = collection(db, "rooms")
+          const roomsQuery = query(roomsCollection, where("hospitalId", "==", selectedHospital))
+          const roomsSnapshot = await getDocs(roomsQuery)
+          const roomsList = roomsSnapshot.docs.map((doc) => ({
+            id: doc.id,
+            name: doc.data().name,
+            hospitalId: doc.data().hospitalId,
+          }))
+          setRooms(roomsList)
+
+          const neurofisiologosCollection = collection(db, "users")
+          const neurofisiologosQuery = query(
+            neurofisiologosCollection,
+            where("role", "==", "neurofisiologo"),
+            where("hospitalId", "==", selectedHospital),
+          )
+          const neurofisiologosSnapshot = await getDocs(neurofisiologosQuery)
+          const neurofisiologosList = neurofisiologosSnapshot.docs.map((doc) => ({
+            id: doc.id,
+            name: doc.data().name,
+          }))
+          setNeurofisiologos(neurofisiologosList)
+
+          await fetchBookings()
+        }
       } catch (error) {
         console.error("Error fetching data:", error)
         toast({
@@ -100,7 +143,7 @@ const OperatingRoomCalendar: React.FC<OperatingRoomCalendarProps> = ({ isAdmin =
     }
 
     fetchData()
-  }, [fetchBookings, toast])
+  }, [fetchBookings, selectedHospital, toast])
 
   const handleBookRoom = async () => {
     if (!isAdmin && !user) {
@@ -121,7 +164,7 @@ const OperatingRoomCalendar: React.FC<OperatingRoomCalendarProps> = ({ isAdmin =
       return
     }
 
-    if (!surgeryType || !estimatedDuration || selectedNeurophysiologists.length === 0) {
+    if (!surgeryType || !estimatedDuration || selectedNeurofisiologos.length === 0) {
       toast({
         title: "Error",
         description: "Por favor, complete todos los campos del formulario.",
@@ -133,11 +176,12 @@ const OperatingRoomCalendar: React.FC<OperatingRoomCalendarProps> = ({ isAdmin =
     try {
       const bookingData = {
         roomId: selectedSlot.roomId,
+        hospitalId: selectedHospital,
         date: Timestamp.fromDate(selectedSlot.date),
         surgeonId: user?.uid || "anonymous",
         surgeryType,
         estimatedDuration: Number(estimatedDuration),
-        neurophysiologistIds: selectedNeurophysiologists,
+        neurophysiologistIds: selectedNeurofisiologos,
         additionalNotes,
         createdAt: Timestamp.fromDate(new Date()),
       }
@@ -153,7 +197,7 @@ const OperatingRoomCalendar: React.FC<OperatingRoomCalendarProps> = ({ isAdmin =
       setSelectedSlot(null)
       setSurgeryType("")
       setEstimatedDuration("")
-      setSelectedNeurophysiologists([])
+      setSelectedNeurofisiologos([])
       setAdditionalNotes("")
       setIsDialogOpen(false)
 
@@ -199,181 +243,189 @@ const OperatingRoomCalendar: React.FC<OperatingRoomCalendarProps> = ({ isAdmin =
     )
   }
 
-  if (rooms.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center py-8 text-center">
-        <Calendar className="h-8 w-8 text-gray-400" />
-        <h3 className="mt-2 text-sm font-medium text-gray-900">No hay quirófanos disponibles</h3>
-        <p className="mt-1 text-sm text-gray-500">No hay quirófanos disponibles en este momento.</p>
-      </div>
-    )
-  }
-
   return (
     <div className="bg-white">
       <div className="flex items-center justify-between pb-4 pt-2">
-        <Button variant="outline" size="icon" onClick={() => setCurrentDate(addDays(currentDate, -7))}>
-          <ChevronLeft className="h-4 w-4" />
-        </Button>
-        <h2 className="text-lg font-semibold text-gray-900">{format(currentDate, "MMMM yyyy", { locale: es })}</h2>
-        <Button variant="outline" size="icon" onClick={() => setCurrentDate(addDays(currentDate, 7))}>
-          <ChevronRight className="h-4 w-4" />
-        </Button>
+        <Select value={selectedHospital} onValueChange={setSelectedHospital}>
+          <SelectTrigger className="w-[200px]">
+            <SelectValue placeholder="Seleccione un hospital" />
+          </SelectTrigger>
+          <SelectContent>
+            {hospitals.map((hospital) => (
+              <SelectItem key={hospital.id} value={hospital.id}>
+                {hospital.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <div className="flex items-center space-x-2">
+          <Button variant="outline" size="icon" onClick={() => setCurrentDate(addDays(currentDate, -7))}>
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <h2 className="text-lg font-semibold text-gray-900">{format(currentDate, "MMMM yyyy", { locale: es })}</h2>
+          <Button variant="outline" size="icon" onClick={() => setCurrentDate(addDays(currentDate, 7))}>
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
-      <div className="border rounded-lg overflow-hidden">
-        <div className="grid grid-cols-7 divide-x">
-          {Array.from({ length: 7 }).map((_, i) => {
-            const day = addDays(startOfWeek(currentDate), i)
-            return (
+      {selectedHospital && (
+        <div className="border rounded-lg overflow-hidden">
+          <div className="grid grid-cols-7 divide-x">
+            {Array.from({ length: 7 }).map((_, i) => {
+              const day = addDays(startOfWeek(currentDate), i)
+              return (
+                <div
+                  key={i}
+                  className={cn("py-3 text-sm font-medium text-center border-b", isToday(day) && "bg-primary/5")}
+                >
+                  {format(day, "EEE dd/MM", { locale: es })}
+                </div>
+              )
+            })}
+          </div>
+
+          <div className="grid grid-cols-[auto_1fr_1fr_1fr_1fr_1fr_1fr_1fr] divide-x">
+            <div className="bg-gray-50 p-4 font-semibold border-b border-r">Quirófano</div>
+            {Array.from({ length: 7 }).map((_, i) => (
               <div
                 key={i}
-                className={cn("py-3 text-sm font-medium text-center border-b", isToday(day) && "bg-primary/5")}
+                className={cn(
+                  "bg-gray-50 p-4 font-semibold text-center border-b border-r",
+                  isToday(addDays(startOfWeek(currentDate), i)) && "bg-primary/5",
+                )}
               >
-                {format(day, "EEE dd/MM", { locale: es })}
+                {format(addDays(startOfWeek(currentDate), i), "dd", { locale: es })}
               </div>
-            )
-          })}
-        </div>
+            ))}
 
-        <div className="grid grid-cols-[auto_1fr_1fr_1fr_1fr_1fr_1fr_1fr] divide-x">
-          <div className="bg-gray-50 p-4 font-semibold border-b border-r">Quirófano</div>
-          {Array.from({ length: 7 }).map((_, i) => (
-            <div
-              key={i}
-              className={cn(
-                "bg-gray-50 p-4 font-semibold text-center border-b border-r",
-                isToday(addDays(startOfWeek(currentDate), i)) && "bg-primary/5",
-              )}
-            >
-              {format(addDays(startOfWeek(currentDate), i), "dd", { locale: es })}
-            </div>
-          ))}
+            {rooms.map((room) => (
+              <React.Fragment key={room.id}>
+                <div className="bg-gray-50 p-4 font-medium border-b border-r">{room.name}</div>
+                {Array.from({ length: 7 }).map((_, i) => {
+                  const currentDay = addDays(startOfWeek(currentDate), i)
+                  const booking = bookings.find(
+                    (booking) => booking.roomId === room.id && isSameDay(booking.date, currentDay),
+                  )
+                  const isBooked = !!booking
 
-          {rooms.map((room) => (
-            <React.Fragment key={room.id}>
-              <div className="bg-gray-50 p-4 font-medium border-b border-r">{room.name}</div>
-              {Array.from({ length: 7 }).map((_, i) => {
-                const currentDay = addDays(startOfWeek(currentDate), i)
-                const booking = bookings.find(
-                  (booking) => booking.roomId === room.id && isSameDay(booking.date, currentDay),
-                )
-                const isBooked = !!booking
-
-                return (
-                  <div
-                    key={i}
-                    className={cn("p-2 text-center border-b border-r h-24", isToday(currentDay) && "bg-primary/5")}
-                  >
-                    {isBooked ? (
-                      <div className="flex flex-col gap-2">
-                        <span className="inline-flex items-center rounded-md bg-red-50 px-2 py-1 text-xs font-medium text-red-700 ring-1 ring-inset ring-red-600/10">
-                          Reservado
-                        </span>
-                        {isAdmin && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="w-full"
-                            onClick={() => handleCancelBooking(booking.id)}
-                          >
-                            Cancelar
-                          </Button>
-                        )}
-                      </div>
-                    ) : (
-                      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-                        <DialogTrigger asChild>
-                          <Button
-                            onClick={() => setSelectedSlot({ roomId: room.id, date: currentDay })}
-                            variant="outline"
-                            className="w-full"
-                          >
-                            Reservar
-                          </Button>
-                        </DialogTrigger>
-                        <DialogContent className="sm:max-w-[425px]">
-                          <DialogHeader>
-                            <DialogTitle>Reservar Quirófano</DialogTitle>
-                            <DialogDescription>
-                              Complete los detalles de la cirugía para reservar el quirófano.
-                            </DialogDescription>
-                          </DialogHeader>
-                          <div className="grid gap-4 py-4">
-                            <div className="grid grid-cols-4 items-center gap-4">
-                              <Label htmlFor="surgeryType" className="text-right">
-                                Tipo de Cirugía
-                              </Label>
-                              <Select value={surgeryType} onValueChange={setSurgeryType}>
-                                <SelectTrigger className="col-span-3">
-                                  <SelectValue placeholder="Seleccione el tipo de cirugía" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="tipo1">Tipo 1</SelectItem>
-                                  <SelectItem value="tipo2">Tipo 2</SelectItem>
-                                  <SelectItem value="tipo3">Tipo 3</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </div>
-                            <div className="grid grid-cols-4 items-center gap-4">
-                              <Label htmlFor="estimatedDuration" className="text-right">
-                                Duración Estimada (min)
-                              </Label>
-                              <Input
-                                id="estimatedDuration"
-                                type="number"
-                                value={estimatedDuration}
-                                onChange={(e) => setEstimatedDuration(e.target.value)}
-                                className="col-span-3"
-                              />
-                            </div>
-                            <div className="grid grid-cols-4 items-center gap-4">
-                              <Label htmlFor="neurophysiologists" className="text-right">
-                                Neurofisiólogos
-                              </Label>
-                              <Select
-                                value={selectedNeurophysiologists.join(",")}
-                                onValueChange={(value) =>
-                                  setSelectedNeurophysiologists(value.split(",").filter(Boolean))
-                                }
-                              >
-                                <SelectTrigger className="col-span-3">
-                                  <SelectValue placeholder="Seleccione neurofisiólogos" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="neuro1">Neurofisiólogo 1</SelectItem>
-                                  <SelectItem value="neuro2">Neurofisiólogo 2</SelectItem>
-                                  <SelectItem value="neuro3">Neurofisiólogo 3</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </div>
-                            <div className="grid grid-cols-4 items-center gap-4">
-                              <Label htmlFor="additionalNotes" className="text-right">
-                                Notas Adicionales
-                              </Label>
-                              <Textarea
-                                id="additionalNotes"
-                                value={additionalNotes}
-                                onChange={(e) => setAdditionalNotes(e.target.value)}
-                                className="col-span-3"
-                              />
-                            </div>
-                          </div>
-                          <DialogFooter>
-                            <Button type="submit" onClick={handleBookRoom}>
-                              Confirmar Reserva
+                  return (
+                    <div
+                      key={i}
+                      className={cn("p-2 text-center border-b border-r h-24", isToday(currentDay) && "bg-primary/5")}
+                    >
+                      {isBooked ? (
+                        <div className="flex flex-col gap-2">
+                          <span className="inline-flex items-center rounded-md bg-red-50 px-2 py-1 text-xs font-medium text-red-700 ring-1 ring-inset ring-red-600/10">
+                            Reservado
+                          </span>
+                          {isAdmin && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="w-full"
+                              onClick={() => handleCancelBooking(booking.id)}
+                            >
+                              Cancelar
                             </Button>
-                          </DialogFooter>
-                        </DialogContent>
-                      </Dialog>
-                    )}
-                  </div>
-                )
-              })}
-            </React.Fragment>
-          ))}
+                          )}
+                        </div>
+                      ) : (
+                        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+                          <DialogTrigger asChild>
+                            <Button
+                              onClick={() => setSelectedSlot({ roomId: room.id, date: currentDay })}
+                              variant="outline"
+                              className="w-full"
+                            >
+                              Reservar
+                            </Button>
+                          </DialogTrigger>
+                          <DialogContent className="sm:max-w-[425px]">
+                            <DialogHeader>
+                              <DialogTitle>Reservar Quirófano</DialogTitle>
+                              <DialogDescription>
+                                Complete los detalles de la cirugía para reservar el quirófano.
+                              </DialogDescription>
+                            </DialogHeader>
+                            <div className="grid gap-4 py-4">
+                              <div className="grid grid-cols-4 items-center gap-4">
+                                <Label htmlFor="surgeryType" className="text-right">
+                                  Tipo de Cirugía
+                                </Label>
+                                <Select value={surgeryType} onValueChange={setSurgeryType}>
+                                  <SelectTrigger className="col-span-3">
+                                    <SelectValue placeholder="Seleccione el tipo de cirugía" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="tipo1">Tipo 1</SelectItem>
+                                    <SelectItem value="tipo2">Tipo 2</SelectItem>
+                                    <SelectItem value="tipo3">Tipo 3</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="grid grid-cols-4 items-center gap-4">
+                                <Label htmlFor="estimatedDuration" className="text-right">
+                                  Duración Estimada (min)
+                                </Label>
+                                <Input
+                                  id="estimatedDuration"
+                                  type="number"
+                                  value={estimatedDuration}
+                                  onChange={(e) => setEstimatedDuration(e.target.value)}
+                                  className="col-span-3"
+                                />
+                              </div>
+                              <div className="grid grid-cols-4 items-center gap-4">
+                                <Label htmlFor="neurophysiologists" className="text-right">
+                                  Neurofisiólogos
+                                </Label>
+                                <Select
+                                  value={selectedNeurofisiologos.join(",")}
+                                  onValueChange={(value) =>
+                                    setSelectedNeurofisiologos(value.split(",").filter(Boolean))
+                                  }
+                                >
+                                  <SelectTrigger className="col-span-3">
+                                    <SelectValue placeholder="Seleccione neurofisiólogos" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {neurofisiologos.map((neuro) => (
+                                      <SelectItem key={neuro.id} value={neuro.id}>
+                                        {neuro.name}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="grid grid-cols-4 items-center gap-4">
+                                <Label htmlFor="additionalNotes" className="text-right">
+                                  Notas Adicionales
+                                </Label>
+                                <Textarea
+                                  id="additionalNotes"
+                                  value={additionalNotes}
+                                  onChange={(e) => setAdditionalNotes(e.target.value)}
+                                  className="col-span-3"
+                                />
+                              </div>
+                            </div>
+                            <DialogFooter>
+                              <Button type="submit" onClick={handleBookRoom}>
+                                Confirmar Reserva
+                              </Button>
+                            </DialogFooter>
+                          </DialogContent>
+                        </Dialog>
+                      )}
+                    </div>
+                  )
+                })}
+              </React.Fragment>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }

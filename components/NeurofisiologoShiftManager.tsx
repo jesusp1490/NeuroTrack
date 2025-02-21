@@ -1,6 +1,6 @@
 "use client"
 
-import type React from "react"
+import React from "react"
 import { useState, useEffect } from "react"
 import { useAuth } from "@/app/context/AuthContext"
 import { Calendar } from "@/components/ui/calendar"
@@ -15,9 +15,16 @@ type ShiftType = "morning" | "afternoon"
 interface Shift {
   id: string
   neurophysiologistId: string
+  hospitalId: string
   date: Timestamp
   type: ShiftType
   createdAt: Timestamp
+  booked: boolean
+}
+
+interface Hospital {
+  id: string
+  name: string
 }
 
 const NeurofisiologoShiftManager: React.FC = () => {
@@ -25,13 +32,23 @@ const NeurofisiologoShiftManager: React.FC = () => {
   const { toast } = useToast()
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date())
   const [shiftType, setShiftType] = useState<ShiftType | "">("")
+  const [selectedHospital, setSelectedHospital] = useState<string>("")
+  const [hospitals, setHospitals] = useState<Hospital[]>([])
   const [existingShifts, setExistingShifts] = useState<Shift[]>([])
 
   useEffect(() => {
     if (user) {
+      fetchHospitals()
       fetchExistingShifts()
     }
   }, [user])
+
+  const fetchHospitals = async () => {
+    const hospitalsRef = collection(db, "hospitals")
+    const snapshot = await getDocs(hospitalsRef)
+    const hospitalsList = snapshot.docs.map((doc) => ({ id: doc.id, name: doc.data().name }))
+    setHospitals(hospitalsList)
+  }
 
   const fetchExistingShifts = async () => {
     if (!user) return
@@ -46,10 +63,10 @@ const NeurofisiologoShiftManager: React.FC = () => {
   }
 
   const handleSetShift = async () => {
-    if (!user || !selectedDate || !shiftType) {
+    if (!user || !selectedDate || !shiftType || !selectedHospital) {
       toast({
         title: "Error",
-        description: "Por favor, seleccione una fecha y un tipo de turno.",
+        description: "Por favor, seleccione una fecha, un tipo de turno y un hospital.",
         variant: "destructive",
       })
       return
@@ -58,9 +75,11 @@ const NeurofisiologoShiftManager: React.FC = () => {
     try {
       await addDoc(collection(db, "shifts"), {
         neurophysiologistId: user.uid,
+        hospitalId: selectedHospital,
         date: Timestamp.fromDate(selectedDate),
         type: shiftType,
         createdAt: Timestamp.fromDate(new Date()),
+        booked: false,
       })
 
       toast({
@@ -70,6 +89,7 @@ const NeurofisiologoShiftManager: React.FC = () => {
 
       await fetchExistingShifts()
       setShiftType("")
+      setSelectedHospital("")
     } catch (error) {
       console.error("Error setting shift:", error)
       toast({
@@ -92,13 +112,26 @@ const NeurofisiologoShiftManager: React.FC = () => {
           <SelectItem value="afternoon">Tarde</SelectItem>
         </SelectContent>
       </Select>
+      <Select value={selectedHospital} onValueChange={(value: string) => setSelectedHospital(value)}>
+        <SelectTrigger className="w-full">
+          <SelectValue placeholder="Seleccione un hospital" />
+        </SelectTrigger>
+        <SelectContent>
+          {hospitals.map((hospital) => (
+            <SelectItem key={hospital.id} value={hospital.id}>
+              {hospital.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
       <Button onClick={handleSetShift}>Establecer Turno</Button>
       <div>
         <h3 className="text-lg font-semibold mb-2">Turnos Establecidos</h3>
         <ul className="space-y-2">
           {existingShifts.map((shift) => (
             <li key={shift.id} className="p-2 bg-secondary rounded-md text-sm">
-              {shift.date.toDate().toLocaleDateString()} - {shift.type === "morning" ? "Mañana" : "Tarde"}
+              {shift.date.toDate().toLocaleDateString()} - {shift.type === "morning" ? "Mañana" : "Tarde"} -
+              {hospitals.find((h) => h.id === shift.hospitalId)?.name}
             </li>
           ))}
         </ul>

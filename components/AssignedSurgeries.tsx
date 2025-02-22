@@ -1,8 +1,6 @@
 "use client"
-
-import React from "react"
 import { useState, useEffect } from "react"
-import { collection, query, where, getDocs, updateDoc, doc, Timestamp } from "firebase/firestore"
+import { collection, query, where, getDocs, updateDoc, doc, getDoc } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import { useAuth } from "@/app/context/AuthContext"
 import { Button } from "@/components/ui/button"
@@ -19,181 +17,303 @@ import {
 } from "@/components/ui/dialog"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { generateSurgeryPDF } from "@/utils/pdfGenerator"
+import { notifyMaterialsUpdated } from "@/utils/notifications"
 import { useToast } from "@/components/ui/use-toast"
+import { surgeryTypes, additionalMaterials } from "@/lib/surgery-types"
+import { SurgeryDetails } from "@/utils/pdfGenerator"
+import { Surgery } from "@/types"
+import { SurgeryMaterial } from "@/lib/surgery-types"
 
-interface Surgery {
-  id: string
-  surgeryType: string
-  date: Date
-  estimatedDuration: number
-  surgeonId: string
-  neurophysiologistId: string
-  roomId: string
-  materials?: string[]
-  hospital: string
-  operatingRoom: string
+interface User {
+  uid: string
 }
 
 interface AssignedSurgeriesProps {
-  isSurgeon?: boolean
+  user?: User | null | undefined
+  isSurgeon?: boolean | null | undefined
 }
 
-const AssignedSurgeries: React.FC<AssignedSurgeriesProps> = ({ isSurgeon = false }) => {
+const AssignedSurgeries = ({ isSurgeon = false }: AssignedSurgeriesProps) => {
+  const { user } = useAuth()
   const [surgeries, setSurgeries] = useState<Surgery[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedSurgery, setSelectedSurgery] = useState<Surgery | null>(null)
   const [selectedMaterials, setSelectedMaterials] = useState<string[]>([])
-  const { user } = useAuth()
   const { toast } = useToast()
-
-  const materials = [
-    "Electrodos",
-    "Agujas EMG",
-    "Gel conductor",
-    "Cinta adhesiva",
-    "Gasas estériles",
-    "Alcohol",
-    "Guantes",
-    "Cables de conexión",
-    "Amplificador de señales",
-    "Monitor",
-  ]
 
   useEffect(() => {
     const fetchSurgeries = async () => {
-      if (!user) return
+      if (!user) {
+        console.log("No user found, skipping surgery fetch")
+        return
+      }
       setLoading(true)
       try {
-        const surgeriesCollection = collection(db, "surgeries")
+        const surgeriesRef = collection(db, "surgeries")
         const fieldToQuery = isSurgeon ? "surgeonId" : "neurophysiologistId"
+
+        console.log("Fetching surgeries with query:", {
+          field: fieldToQuery,
+          value: user.uid,
+          isSurgeon,
+        })
+
         const surgeriesQuery = query(
-          surgeriesCollection,
+          surgeriesRef,
           where(fieldToQuery, "==", user.uid),
-          where("date", ">=", Timestamp.now()),
+          where("status", "==", "scheduled"),
         )
+
         const surgeriesSnapshot = await getDocs(surgeriesQuery)
-        const surgeriesList = surgeriesSnapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-          date: doc.data().date.toDate(),
-        })) as Surgery[]
-        setSurgeries(surgeriesList)
+
+        const surgeriesWithDetails = await Promise.all(
+          surgeriesSnapshot.docs.map(async (surgeryDoc) => {
+            const surgeryData = surgeryDoc.data()
+            const surgeryType = surgeryTypes.find((type) => type.id === surgeryData.surgeryType)
+            if (!surgeryType) {
+              console.error(`Invalid surgery type: ${surgeryData.surgeryType}`)
+              return null
+            }
+
+            try {
+              const [surgeonDoc, neurophysiologistDoc, hospitalDoc] = await Promise.all([
+                getDoc(doc(db, "users", surgeryData.surgeonId)),
+                getDoc(doc(db, "users", surgeryData.neurophysiologistId)),
+                getDoc(doc(db, "hospitals", surgeryData.hospitalId)),
+              ])
+
+              const missingDocs = []
+              if (!surgeonDoc.exists()) missingDocs.push("surgeon")
+              if (!neurophysiologistDoc.exists()) missingDocs.push("neurophysiologist")
+              if (!hospitalDoc.exists()) missingDocs.push("hospital")
+
+              if (missingDocs.length > 0) {
+                console.warn(`Missing related document(s) for surgery ${surgeryDoc.id}: ${missingDocs.join(", ")}`)
+              }
+
+              return {
+                id: surgeryDoc.id,
+                shiftId: surgeryData.shiftId,
+                surgeonId: surgeryData.surgeonId,
+                neurophysiologistId: surgeryData.neurophysiologistId,
+                type: surgeryData.type,
+                duration: surgeryData.duration,
+                date: surgeryData.date.toDate(),
+                surgeryType,
+                estimatedDuration: surgeryData.estimatedDuration,
+                additionalNotes: surgeryData.additionalNotes,
+                status: surgeryData.status,
+                hospitalId: surgeryData.hospitalId,
+                materials: surgeryData.materials || [],
+                surgeon: {
+                  id: surgeryData.surgeonId,
+                  name: surgeonDoc.exists() ? surgeonDoc.data()?.name : "Unknown",
+                },
+                neurophysiologist: {
+                  id: surgeryData.neurophysiologistId,
+                  name: neurophysiologistDoc.exists() ? neurophysiologistDoc.data()?.name : "Unknown",
+                },
+                hospital: {
+                  id: surgeryData.hospitalId,
+                  name: hospitalDoc.exists() ? hospitalDoc.data()?.name : "Unknown",
+                },
+                hasMissingData: missingDocs.length > 0,
+              } as Surgery
+            } catch (error) {
+              console.error(`Error fetching details for surgery ${surgeryDoc.id}:`, error)
+              return null
+            }
+          }),
+        )
+
+        const validSurgeries = surgeriesWithDetails.filter((surgery): surgery is Surgery => surgery !== null)
+        console.log(`Processed ${validSurgeries.length} valid surgeries:`, validSurgeries)
+
+        const sortedSurgeries = validSurgeries.sort((a, b) => a.date.getTime() - b.date.getTime())
+        setSurgeries(sortedSurgeries)
       } catch (error) {
         console.error("Error fetching surgeries:", error)
         toast({
           title: "Error",
-          description: "No se pudieron cargar las cirugías asignadas. Por favor, inténtelo de nuevo más tarde.",
+          description: "No se pudieron cargar las cirugías asignadas",
           variant: "destructive",
         })
+      } finally {
+        setLoading(false)
       }
-      setLoading(false)
     }
 
     fetchSurgeries()
   }, [user, isSurgeon, toast])
 
-  const handleMaterialSelection = (material: string) => {
-    setSelectedMaterials((prev) => (prev.includes(material) ? prev.filter((m) => m !== material) : [...prev, material]))
+  const handleMaterialSelection = (materialId: string) => {
+    setSelectedMaterials((prevSelected) =>
+      prevSelected.includes(materialId)
+        ? prevSelected.filter((id) => id !== materialId)
+        : [...prevSelected, materialId],
+    )
   }
 
   const handleMaterialSubmission = async () => {
     if (!selectedSurgery) return
+
     try {
-      await updateDoc(doc(db, "surgeries", selectedSurgery.id), {
-        materials: selectedMaterials,
-      })
-      setSurgeries((prev) =>
-        prev.map((surgery) =>
-          surgery.id === selectedSurgery.id ? { ...surgery, materials: selectedMaterials } : surgery,
+      const surgeryRef = doc(db, "surgeries", selectedSurgery.id)
+      const materialsToUpdate = additionalMaterials.filter((material) => selectedMaterials.includes(material.id))
+
+      await updateDoc(surgeryRef, { materials: materialsToUpdate })
+
+      setSurgeries((prevSurgeries) =>
+        prevSurgeries.map((surgery) =>
+          surgery.id === selectedSurgery.id ? { ...surgery, materials: materialsToUpdate } : surgery,
         ),
       )
+
       setSelectedSurgery(null)
       setSelectedMaterials([])
+
       toast({
         title: "Éxito",
         description: "Materiales actualizados correctamente.",
       })
+
+      await notifyMaterialsUpdated(selectedSurgery)
     } catch (error) {
-      console.error("Error updating surgery materials:", error)
+      console.error("Error updating materials:", error)
       toast({
         title: "Error",
-        description: "No se pudieron actualizar los materiales. Por favor, inténtelo de nuevo.",
+        description: "No se pudieron actualizar los materiales.",
         variant: "destructive",
       })
     }
   }
 
-  const handleGeneratePDF = (surgery: Surgery) => {
-    const surgeryDetails = {
-      type: surgery.surgeryType,
+  const handleGeneratePDF = async (surgery: Surgery) => {
+    const surgeryDetails: SurgeryDetails = {
+      id: surgery.id,
+      surgeryType: surgery.surgeryType,
       date: surgery.date,
-      duration: surgery.estimatedDuration,
-      surgeon: "Dr. " + surgery.surgeonId,
-      neurophysiologist: "Dr. " + surgery.neurophysiologistId,
-      hospital: surgery.hospital || "Hospital General",
-      operatingRoom: surgery.operatingRoom || "Quirófano 1",
-      materials: surgery.materials || [],
+      estimatedDuration: surgery.estimatedDuration,
+      surgeon: surgery.surgeon,
+      neurophysiologist: surgery.neurophysiologist,
+      hospital: surgery.hospital,
+      materials: surgery.materials,
     }
+
     generateSurgeryPDF(surgeryDetails)
   }
 
+  if (!user) {
+    return <div>Por favor, inicie sesión para ver las cirugías asignadas.</div>
+  }
+
   if (loading) {
-    return <div>Cargando cirugías asignadas...</div>
+    return <div>Cargando cirugías asignadas... Por favor, espere.</div>
   }
 
   if (surgeries.length === 0) {
-    return <div>No hay cirugías asignadas en este momento.</div>
+    return (
+      <div>
+        No hay cirugías {isSurgeon ? "programadas" : "asignadas"} en este momento. Si cree que esto es un error, por
+        favor actualice la página o contacte al soporte técnico.
+      </div>
+    )
   }
 
   return (
     <div className="space-y-4">
-      {surgeries.map((surgery) => (
-        <Card key={surgery.id}>
-          <CardHeader>
-            <CardTitle>{surgery.surgeryType}</CardTitle>
-            <CardDescription>
-              Fecha: {surgery.date.toLocaleDateString()} - Duración estimada: {surgery.estimatedDuration} minutos
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p>Quirófano: {surgery.roomId}</p>
-            {surgery.materials && <p>Materiales seleccionados: {surgery.materials.join(", ")}</p>}
-          </CardContent>
-          <CardFooter className="justify-between">
-            {!isSurgeon && (
-              <Dialog>
-                <DialogTrigger asChild>
-                  <Button variant="outline" onClick={() => setSelectedSurgery(surgery)}>
-                    {surgery.materials ? "Editar Materiales" : "Seleccionar Materiales"}
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Seleccionar Materiales</DialogTitle>
-                    <DialogDescription>Elija los materiales necesarios para la cirugía.</DialogDescription>
-                  </DialogHeader>
-                  <ScrollArea className="h-[200px] w-full rounded-md border p-4">
-                    {materials.map((material) => (
-                      <div key={material} className="flex items-center space-x-2 mb-2">
-                        <Checkbox
-                          id={material}
-                          checked={selectedMaterials.includes(material)}
-                          onCheckedChange={() => handleMaterialSelection(material)}
-                        />
-                        <label htmlFor={material}>{material}</label>
-                      </div>
+      {surgeries.map((surgery) => {
+        const surgeryType = surgery.surgeryType
+
+        return (
+          <Card key={surgery.id}>
+            <CardHeader>
+              <CardTitle>{surgeryType.name}</CardTitle>
+              <CardDescription>
+                Fecha: {surgery.date.toLocaleDateString()} - Duración estimada: {surgery.estimatedDuration} minutos
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {surgery.hasMissingData && (
+                <p className="text-yellow-500 mb-2">
+                  Advertencia: Algunos datos relacionados con esta cirugía están incompletos.
+                </p>
+              )}
+              <p>
+                <strong>Surgeon:</strong> {surgery.surgeon.name}
+              </p>
+              <p>
+                <strong>Neurophysiologist:</strong> {surgery.neurophysiologist.name}
+              </p>
+              <p>
+                <strong>Hospital:</strong> {surgery.hospital.name}
+              </p>
+              <div>
+                <strong>Materiales:</strong>
+                {surgery.materials.length > 0 ? (
+                  <ul>
+                    {surgery.materials.map((material: SurgeryMaterial) => (
+                      <li key={material.id}>{material.name}</li>
                     ))}
-                  </ScrollArea>
-                  <DialogFooter>
-                    <Button onClick={handleMaterialSubmission}>Guardar Selección</Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
-            )}
-            <Button onClick={() => handleGeneratePDF(surgery)}>Generar Informe PDF</Button>
-          </CardFooter>
-        </Card>
-      ))}
+                  </ul>
+                ) : (
+                  "No se han seleccionado materiales adicionales."
+                )}
+              </div>
+            </CardContent>
+            <CardFooter className="justify-between">
+              {!isSurgeon && (
+                <Dialog>
+                  <DialogTrigger asChild>
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setSelectedSurgery(surgery)
+                        setSelectedMaterials(surgery.materials.map((m: SurgeryMaterial) => m.id))
+                      }}
+                    >
+                      {surgery.materials?.length ? "Editar Materiales" : "Seleccionar Materiales"}
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Seleccionar Materiales Adicionales</DialogTitle>
+                      <DialogDescription>
+                        Seleccione los materiales adicionales necesarios para la cirugía.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <ScrollArea className="h-[300px] w-[300px]">
+                      <div className="grid gap-2">
+                        {additionalMaterials.map((material) => (
+                          <div key={material.id} className="flex items-center space-x-2">
+                            <Checkbox
+                              id={material.id}
+                              checked={selectedMaterials.includes(material.id)}
+                              onCheckedChange={() => handleMaterialSelection(material.id)}
+                            />
+                            <label
+                              htmlFor={material.id}
+                              className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                            >
+                              {material.name}
+                            </label>
+                          </div>
+                        ))}
+                      </div>
+                    </ScrollArea>
+                    <DialogFooter>
+                      <Button type="submit" onClick={handleMaterialSubmission}>
+                        Guardar Materiales
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              )}
+              <Button onClick={() => handleGeneratePDF(surgery)}>Generar Informe PDF</Button>
+            </CardFooter>
+          </Card>
+        )
+      })}
     </div>
   )
 }

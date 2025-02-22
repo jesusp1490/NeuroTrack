@@ -1,7 +1,7 @@
 "use client"
 
 import React from "react"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useAuth } from "@/app/context/AuthContext"
 import { Calendar } from "@/components/ui/calendar"
 import { Button } from "@/components/ui/button"
@@ -50,7 +50,7 @@ const NeurofisiologoShiftManager: React.FC = () => {
     setHospitals(hospitalsList)
   }
 
-  const fetchExistingShifts = async () => {
+  const fetchExistingShifts = useCallback(async () => {
     if (!user) return
     const shiftsRef = collection(db, "shifts")
     const q = query(shiftsRef, where("neurophysiologistId", "==", user.uid))
@@ -58,9 +58,11 @@ const NeurofisiologoShiftManager: React.FC = () => {
     const shifts = querySnapshot.docs.map((doc) => ({
       id: doc.id,
       ...doc.data(),
+      date: doc.data().date,
     })) as Shift[]
+    console.log("Fetched shifts:", shifts) // Debug log
     setExistingShifts(shifts)
-  }
+  }, [user])
 
   const handleSetShift = async () => {
     if (!user || !selectedDate || !shiftType || !selectedHospital) {
@@ -73,14 +75,23 @@ const NeurofisiologoShiftManager: React.FC = () => {
     }
 
     try {
-      await addDoc(collection(db, "shifts"), {
+      // Set the time to the start of the day
+      const shiftDate = new Date(selectedDate)
+      shiftDate.setHours(0, 0, 0, 0)
+
+      const shiftData = {
         neurophysiologistId: user.uid,
         hospitalId: selectedHospital,
-        date: Timestamp.fromDate(selectedDate),
+        date: Timestamp.fromDate(shiftDate),
         type: shiftType,
         createdAt: Timestamp.fromDate(new Date()),
         booked: false,
-      })
+      }
+
+      console.log("Creating shift with data:", shiftData) // Debug log
+
+      const docRef = await addDoc(collection(db, "shifts"), shiftData)
+      console.log("Shift created with ID:", docRef.id) // Debug log
 
       toast({
         title: "Éxito",

@@ -3,23 +3,54 @@ import * as admin from "firebase-admin"
 
 admin.initializeApp()
 
-export const setUserRole = functions.auth.user().onCreate(async (user: functions.auth.UserRecord) => {
-  try {
-    // Get the user's data from Firestore
-    const userDoc = await admin.firestore().collection("users").doc(user.uid).get()
-    const userData = userDoc.data()
+interface Booking {
+  date: admin.firestore.Timestamp
+  neurophysiologistIds: string[]
+  requiredNeurophysiologists: number
+}
 
-    if (userData && userData.role) {
-      // Set custom claims based on the user's role
-      await admin.auth().setCustomUserClaims(user.uid, { role: userData.role })
-      console.log(`Custom claims set for user ${user.uid}`)
-    } else {
-      console.log(`No role found for user ${user.uid}`)
+interface AssignmentCounts {
+  [key: string]: number
+}
+
+export const optimizeNeurophysiologistAssignment = functions.firestore.onDocumentCreated(
+  "bookings/{bookingId}",
+  async (event) => {
+    const snap = event.data
+    if (!snap) {
+      console.log("No data associated with the event")
+      return
     }
-  } catch (error) {
-    console.error("Error setting custom claims:", error)
-  }
-})
+    const booking = snap.data() as Booking
+    const db = admin.firestore()
 
-// Add more functions as needed
+    // Get all available neurophysiologists for the booking date
+    const shiftsSnapshot = await db.collection("shifts").where("date", "==", booking.date).get()
+
+    const availableNeurophysiologists = shiftsSnapshot.docs.map((doc) => doc.data().neurophysiologistId as string)
+
+    // Get all bookings for the same date
+    const bookingsSnapshot = await db.collection("bookings").where("date", "==", booking.date).get()
+
+    // Count current assignments for each neurophysiologist
+    const assignmentCounts: AssignmentCounts = {}
+    bookingsSnapshot.docs.forEach((doc) => {
+      const bookingData = doc.data() as Booking
+      bookingData.neurophysiologistIds.forEach((id: string) => {
+        assignmentCounts[id] = (assignmentCounts[id] || 0) + 1
+      })
+    })
+
+    // Sort neurophysiologists by assignment count
+    const sortedNeurophysiologists = availableNeurophysiologists.sort(
+      (a, b) => (assignmentCounts[a] || 0) - (assignmentCounts[b] || 0),
+    )
+
+    // Assign the required number of neurophysiologists
+    const assignedNeurophysiologists = sortedNeurophysiologists.slice(0, booking.requiredNeurophysiologists)
+
+    // Update the booking with assigned neurophysiologists
+    await snap.ref.update({ neurophysiologistIds: assignedNeurophysiologists })
+  },
+)
 

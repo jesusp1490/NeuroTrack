@@ -1,6 +1,6 @@
-import { initializeApp, getApps, type FirebaseApp } from "firebase/app"
-import { getAuth, type Auth } from "firebase/auth"
-import { getFirestore, type Firestore } from "firebase/firestore"
+import { initializeApp, getApps } from "firebase/app"
+import { getAuth } from "firebase/auth"
+import { getFirestore } from "firebase/firestore"
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -12,15 +12,9 @@ const firebaseConfig = {
   measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID,
 }
 
-let app: FirebaseApp
-let auth: Auth
-let db: Firestore
-
-if (typeof window !== "undefined" && !getApps().length) {
-  app = initializeApp(firebaseConfig)
-  auth = getAuth(app)
-  db = getFirestore(app)
-}
+// Initialize Firebase only if it hasn't been initialized
+const app = !getApps().length ? initializeApp(firebaseConfig) : getApps()[0]
+const auth = getAuth(app)
+const db = getFirestore(app)
 
 export { app, auth, db }
-

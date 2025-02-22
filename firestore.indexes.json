@@ -1,0 +1,19 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "surgeries",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "neurophysiologistId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "date",
+          "order": "ASCENDING"
+        }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

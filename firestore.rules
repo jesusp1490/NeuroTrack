@@ -1,0 +1,139 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Function to check if the user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Function to check if the user owns the document
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Function to check if the user has admin role
+    function isAdmin() {
+      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // Function to check if the user is a cirujano
+    function isCirujano() {
+      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'cirujano';
+    }
+
+    // Function to check if the user is a neurofisiologo
+    function isNeurofisiologo() {
+      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'neurofisiologo';
+    }
+
+    // Function to validate user data
+    function isValidUser(userData) {
+      return userData.size() == 5
+        && 'name' in userData && userData.name is string
+        && 'email' in userData && userData.email is string
+        && 'role' in userData && userData.role in ['cirujano', 'neurofisiologo', 'admin']
+        && 'createdAt' in userData && userData.createdAt is timestamp
+        && 'updatedAt' in userData && userData.updatedAt is timestamp;
+    }
+
+    // Rules for the users collection
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidUser(request.resource.data);
+      allow update: if (isOwner(userId) || isAdmin()) && isValidUser(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    // Rules for the surgeries collection
+    match /surgeries/{surgeryId} {
+      // Function to validate surgery data
+      function isValidSurgery(surgeryData) {
+        return surgeryData.size() == 8
+          && 'surgeryType' in surgeryData && surgeryData.surgeryType is string
+          && 'date' in surgeryData && surgeryData.date is timestamp
+          && 'estimatedDuration' in surgeryData && surgeryData.estimatedDuration is number
+          && 'surgeonId' in surgeryData && surgeryData.surgeonId is string
+          && 'neurophysiologistId' in surgeryData && surgeryData.neurophysiologistId is string
+          && 'roomId' in surgeryData && surgeryData.roomId is string
+          && 'status' in surgeryData && surgeryData.status in ['scheduled', 'in-progress', 'completed', 'cancelled']
+          && 'createdAt' in surgeryData && surgeryData.createdAt is timestamp;
+      }
+
+      allow read: if isAuthenticated() && (resource.data.neurophysiologistId == request.auth.uid || resource.data.surgeonId == request.auth.uid);
+      allow create: if isCirujano() && isValidSurgery(request.resource.data) && request.auth.uid == request.resource.data.surgeonId;
+      allow update: if isAuthenticated() 
+        && (request.auth.uid == resource.data.surgeonId 
+            || request.auth.uid == resource.data.neurophysiologistId
+            || isAdmin())
+        && isValidSurgery(request.resource.data);
+      allow delete: if isAdmin();
+      allow write: if isAuthenticated() && (resource.data.neurophysiologistId == request.auth.uid || resource.data.surgeonId == request.auth.uid);
+    }
+
+    // Rules for the materials collection
+    match /materials/{materialId} {
+      function isValidMaterial(materialData) {
+        return materialData.size() == 3
+          && 'name' in materialData && materialData.name is string
+          && 'category' in materialData && materialData.category is string
+          && 'quantity' in materialData && materialData.quantity is number && materialData.quantity >= 0;
+      }
+
+      allow read: if isAuthenticated();
+      allow create, update: if isAdmin() && isValidMaterial(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    // Rules for the shifts collection
+    match /shifts/{shiftId} {
+      function isValidShift(shiftData) {
+        return shiftData.size() == 5
+          && 'date' in shiftData && shiftData.date is timestamp
+          && 'type' in shiftData && shiftData.type in ['morning', 'afternoon']
+          && 'neurophysiologistId' in shiftData && shiftData.neurophysiologistId is string
+          && 'booked' in shiftData && shiftData.booked is bool
+          && 'createdAt' in shiftData && shiftData.createdAt is timestamp;
+      }
+
+      allow read: if isAuthenticated();
+      allow create: if isNeurofisiologo() && isValidShift(request.resource.data) && request.auth.uid == request.resource.data.neurophysiologistId;
+      allow update: if isAuthenticated() 
+        && (request.auth.uid == resource.data.neurophysiologistId || isAdmin())
+        && isValidShift(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    // Rules for the rooms collection
+    match /rooms/{roomId} {
+      function isValidRoom(roomData) {
+        return roomData.size() == 2
+          && 'name' in roomData && roomData.name is string
+          && 'available' in roomData && roomData.available is bool;
+      }
+
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAdmin() && isValidRoom(request.resource.data);
+    }
+
+    // Rules for the bookings collection
+    match /bookings/{bookingId} {
+      function isValidBooking(bookingData) {
+        return bookingData.size() == 6
+          && 'roomId' in bookingData && bookingData.roomId is string
+          && 'date' in bookingData && bookingData.date is timestamp
+          && 'surgeonId' in bookingData && bookingData.surgeonId is string
+          && 'surgeryType' in bookingData && bookingData.surgeryType is string
+          && 'estimatedDuration' in bookingData && bookingData.estimatedDuration is number
+          && 'createdAt' in bookingData && bookingData.createdAt is timestamp;
+      }
+
+      allow read: if isAuthenticated();
+      allow create: if isCirujano() && isValidBooking(request.resource.data) && request.auth.uid == request.resource.data.surgeonId;
+      allow update: if isAuthenticated() 
+        && (request.auth.uid == resource.data.surgeonId || isAdmin())
+        && isValidBooking(request.resource.data);
+      allow delete: if isAdmin();
+    }
+  }
+}
+

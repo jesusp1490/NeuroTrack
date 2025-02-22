@@ -1,15 +1,14 @@
 "use client"
 
-import type React from "react"
-import { useState, useEffect } from "react"
-import { format, startOfWeek, addDays, isSameDay, isToday } from "date-fns"
+import React from "react"
+import { useState, useEffect, useCallback } from "react"
+import { format, startOfDay, endOfDay } from "date-fns"
 import { es } from "date-fns/locale"
-import { collection, query, where, getDocs, addDoc, Timestamp } from "firebase/firestore"
+import { collection, query, where, getDocs, addDoc, Timestamp, doc, updateDoc, getDoc } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import { useAuth } from "@/app/context/AuthContext"
 import { Button } from "@/components/ui/button"
-import { Calendar, ChevronLeft, ChevronRight } from "lucide-react"
-import { cn } from "@/lib/utils"
+import { Calendar } from "@/components/ui/calendar-full"
 import {
   Dialog,
   DialogContent,
@@ -17,311 +16,289 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useToast } from "@/components/ui/use-toast"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Textarea } from "@/components/ui/textarea"
+import { NavButtons } from "@/components/ui/nav-buttons"
+import { serverTimestamp } from "firebase/firestore"
+import { surgeryTypes } from "@/lib/surgery-types"
 
-type Room = {
-  id: string
-  name: string
-}
+// Define the props for the component
 
-type Booking = {
+interface Shift {
   id: string
-  roomId: string
-  date: Date
-  surgeonId: string
-  surgeryType: string
-  estimatedDuration: number
+  date: string
+  startTime: string
+  endTime: string
+  operatingRoom: string
+  neurophysiologistId: string
+  booked: boolean
+  surgeryId: string | null
 }
 
 const OperatingRoomCalendar: React.FC = () => {
-  const [currentDate, setCurrentDate] = useState(new Date())
-  const [rooms, setRooms] = useState<Room[]>([])
-  const [bookings, setBookings] = useState<Booking[]>([])
-  const [loading, setLoading] = useState(true)
-  const [selectedSlot, setSelectedSlot] = useState<{ roomId: string; date: Date } | null>(null)
-  const [surgeryType, setSurgeryType] = useState("")
-  const [estimatedDuration, setEstimatedDuration] = useState("")
-  const [isDialogOpen, setIsDialogOpen] = useState(false)
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date())
+  const [availableShifts, setAvailableShifts] = useState<Shift[]>([])
+  const [selectedShift, setSelectedShift] = useState<Shift | null>(null)
+  const [isBookingDialogOpen, setIsBookingDialogOpen] = useState<boolean>(false)
+  const [surgeryType, setSurgeryType] = useState<string | undefined>(undefined)
+  const [estimatedDuration, setEstimatedDuration] = useState<string>("")
+  const [additionalNotes, setAdditionalNotes] = useState<string>("")
+  const [selectedHospital] = useState<string>("Hospital ABC") // Default value
   const { user } = useAuth()
   const { toast } = useToast()
 
+  const fetchAvailability = useCallback(async () => {
+    try {
+      const start = startOfDay(selectedDate)
+      const end = endOfDay(selectedDate)
+
+      const shiftsQuery = query(
+        collection(db, "shifts"),
+        where("date", ">=", Timestamp.fromDate(start)),
+        where("date", "<=", Timestamp.fromDate(end)),
+        where("booked", "==", false),
+      )
+
+      const shiftsSnapshot = await getDocs(shiftsQuery)
+      const shiftsList = shiftsSnapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+        date: format(doc.data().date.toDate(), "yyyy-MM-dd"),
+        startTime: doc.data().startTime,
+        endTime: doc.data().endTime,
+        operatingRoom: doc.data().operatingRoom,
+        neurophysiologistId: doc.data().neurophysiologistId,
+        booked: doc.data().booked,
+        surgeryId: doc.data().surgeryId || null,
+      })) as Shift[]
+
+      setAvailableShifts(shiftsList)
+    } catch (error) {
+      console.error("Error fetching shifts:", error)
+      toast({
+        title: "Error",
+        description: "Failed to fetch available shifts.",
+        variant: "destructive",
+      })
+    }
+  }, [selectedDate, toast])
+
   useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true)
-      try {
-        // Fetch rooms
-        const roomsCollection = collection(db, "rooms")
-        const roomsSnapshot = await getDocs(roomsCollection)
-        const roomsList = roomsSnapshot.docs.map((doc) => ({
-          id: doc.id,
-          name: doc.data().name,
-        }))
-        setRooms(roomsList)
+    fetchAvailability()
+  }, [fetchAvailability])
 
-        // Fetch bookings
-        const startDate = startOfWeek(currentDate)
-        const endDate = addDays(startDate, 7)
-        const bookingsCollection = collection(db, "bookings")
-        const bookingsQuery = query(
-          bookingsCollection,
-          where("date", ">=", Timestamp.fromDate(startDate)),
-          where("date", "<", Timestamp.fromDate(endDate)),
-        )
-        const bookingsSnapshot = await getDocs(bookingsQuery)
-        const bookingsList = bookingsSnapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-          date: doc.data().date.toDate(),
-        })) as Booking[]
-        setBookings(bookingsList)
-      } catch (error) {
-        console.error("Error fetching data:", error)
-        toast({
-          title: "Error",
-          description: "No se pudieron cargar los datos. Por favor, inténtelo de nuevo más tarde.",
-          variant: "destructive",
-        })
-      }
-      setLoading(false)
-    }
+  const handleDateSelect = (date: Date) => {
+    setSelectedDate(date)
+    setSelectedShift(null)
+  }
 
-    fetchData()
-  }, [currentDate, toast])
+  const handleShiftSelect = (shift: Shift) => {
+    setSelectedShift(shift)
+    setIsBookingDialogOpen(true)
+  }
 
-  const handleBookRoom = async () => {
-    if (!user) {
+  const handleCloseDialog = () => {
+    setIsBookingDialogOpen(false)
+    setSelectedShift(null)
+    setSurgeryType(undefined)
+    setEstimatedDuration("")
+    setAdditionalNotes("")
+  }
+
+  const handleBookShift = async () => {
+    if (!selectedShift || !user || !surgeryType || !estimatedDuration) {
       toast({
         title: "Error",
-        description: "Debe iniciar sesión para reservar un quirófano.",
-        variant: "destructive",
-      })
-      return
-    }
-
-    if (!selectedSlot) {
-      toast({
-        title: "Error",
-        description: "Por favor, seleccione un horario para reservar.",
-        variant: "destructive",
-      })
-      return
-    }
-
-    if (!surgeryType || !estimatedDuration) {
-      toast({
-        title: "Error",
-        description: "Por favor, complete todos los campos del formulario.",
+        description: "Por favor, complete todos los campos requeridos.",
         variant: "destructive",
       })
       return
     }
 
     try {
-      await addDoc(collection(db, "bookings"), {
-        roomId: selectedSlot.roomId,
-        date: Timestamp.fromDate(selectedSlot.date),
+      // Check user authentication
+      if (!user.uid) {
+        throw new Error("User is not authenticated")
+      }
+
+      // Fetch user data to verify role
+      const userDoc = await getDoc(doc(db, "users", user.uid))
+      if (!userDoc.exists()) {
+        throw new Error("User document not found")
+      }
+      const userData = userDoc.data()
+      console.log("User data:", userData)
+
+      if (userData.role !== "cirujano") {
+        throw new Error(`User does not have cirujano role. Current role: ${userData.role}`)
+      }
+
+      const selectedSurgeryType = surgeryTypes.find((type) => type.id === surgeryType)
+      if (!selectedSurgeryType) {
+        throw new Error("Invalid surgery type")
+      }
+
+      // Verify that the neurophysiologist exists
+      const neurophysiologistDoc = await getDoc(doc(db, "users", selectedShift.neurophysiologistId))
+      if (!neurophysiologistDoc.exists()) {
+        throw new Error("Neurophysiologist not found")
+      }
+
+      // Verify that the hospital exists
+      const hospitalDoc = await getDoc(doc(db, "hospitals", selectedHospital))
+      if (!hospitalDoc.exists()) {
+        throw new Error("Hospital not found")
+      }
+
+      const surgeryData = {
+        shiftId: selectedShift.id,
+        hospitalId: selectedHospital,
+        date: Timestamp.fromDate(selectedDate),
         surgeonId: user.uid,
-        surgeryType,
-        estimatedDuration: Number.parseInt(estimatedDuration),
-        createdAt: Timestamp.fromDate(new Date()),
+        neurophysiologistId: selectedShift.neurophysiologistId,
+        surgeryType: surgeryType,
+        estimatedDuration: Number(estimatedDuration),
+        additionalNotes: additionalNotes || "",
+        status: "scheduled",
+        createdAt: serverTimestamp(),
+        materials: selectedSurgeryType.defaultMaterials,
+      }
+
+      console.log("Attempting to create surgery with data:", surgeryData)
+
+      const surgeryRef = await addDoc(collection(db, "surgeries"), surgeryData)
+
+      console.log("Surgery created successfully with ID:", surgeryRef.id)
+
+      await updateDoc(doc(db, "shifts", selectedShift.id), {
+        booked: true,
+        surgeryId: surgeryRef.id,
       })
-
-      // Refresh bookings
-      const startDate = startOfWeek(currentDate)
-      const endDate = addDays(startDate, 7)
-      const bookingsCollection = collection(db, "bookings")
-      const bookingsQuery = query(
-        bookingsCollection,
-        where("date", ">=", Timestamp.fromDate(startDate)),
-        where("date", "<", Timestamp.fromDate(endDate)),
-      )
-      const bookingsSnapshot = await getDocs(bookingsQuery)
-      const bookingsList = bookingsSnapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-        date: doc.data().date.toDate(),
-      })) as Booking[]
-      setBookings(bookingsList)
-
-      // Reset form
-      setSelectedSlot(null)
-      setSurgeryType("")
-      setEstimatedDuration("")
-      setIsDialogOpen(false)
 
       toast({
         title: "Éxito",
-        description: "Quirófano reservado correctamente.",
+        description: "Reserva realizada correctamente",
       })
-    } catch (error) {
-      console.error("Error booking room:", error)
+
+      setSelectedShift(null)
+      setSurgeryType("")
+      setEstimatedDuration("")
+      setAdditionalNotes("")
+
+      await fetchAvailability()
+    } catch (error: unknown) {
+      console.error("Error booking surgery:", error)
+      let errorMessage = "Error desconocido al realizar la reserva."
+      if (error instanceof Error) {
+        errorMessage = error.message
+      }
       toast({
         title: "Error",
-        description: "No se pudo reservar el quirófano. Por favor, inténtelo de nuevo.",
+        description: `Error al realizar la reserva: ${errorMessage}`,
         variant: "destructive",
       })
     }
   }
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-8">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-      </div>
-    )
-  }
-
-  if (rooms.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center py-8 text-center">
-        <Calendar className="h-8 w-8 text-gray-400" />
-        <h3 className="mt-2 text-sm font-medium text-gray-900">No hay quirófanos disponibles</h3>
-        <p className="mt-1 text-sm text-gray-500">No hay quirófanos disponibles en este momento.</p>
-      </div>
-    )
-  }
-
-  const renderHeader = () => {
-    const dateFormat = "MMMM yyyy"
-    return (
-      <div className="flex items-center justify-between pb-4 pt-2">
-        <Button variant="outline" size="icon" onClick={() => setCurrentDate(addDays(currentDate, -7))}>
-          <ChevronLeft className="h-4 w-4" />
-        </Button>
-        <h2 className="text-lg font-semibold text-gray-900">{format(currentDate, dateFormat, { locale: es })}</h2>
-        <Button variant="outline" size="icon" onClick={() => setCurrentDate(addDays(currentDate, 7))}>
-          <ChevronRight className="h-4 w-4" />
-        </Button>
-      </div>
-    )
-  }
-
-  const renderDays = () => {
-    const dateFormat = "EEE dd/MM"
-    const days = []
-    const startDate = startOfWeek(currentDate)
-
-    for (let i = 0; i < 7; i++) {
-      const day = addDays(startDate, i)
-      days.push(
-        <div key={i} className={cn("py-3 text-sm font-medium text-center border-b", isToday(day) && "bg-primary/5")}>
-          {format(day, dateFormat, { locale: es })}
-        </div>,
-      )
-    }
-
-    return <div className="grid grid-cols-7 divide-x">{days}</div>
-  }
-
-  const renderCells = () => {
-    const startDate = startOfWeek(currentDate)
-    const rows = rooms.map((room) => {
-      const cells = []
-      let day = startDate
-      for (let i = 0; i < 7; i++) {
-        const currentDay = addDays(day, i)
-        const isBooked = bookings.some((booking) => booking.roomId === room.id && isSameDay(booking.date, currentDay))
-        cells.push(
-          <div
-            key={currentDay.toString()}
-            className={cn("p-2 text-center border-b border-r h-24", isToday(currentDay) && "bg-primary/5")}
-          >
-            {isBooked ? (
-              <span className="inline-flex items-center rounded-md bg-red-50 px-2 py-1 text-xs font-medium text-red-700 ring-1 ring-inset ring-red-600/10">
-                Reservado
-              </span>
-            ) : (
-              <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-                <DialogTrigger asChild>
-                  <Button
-                    onClick={() => setSelectedSlot({ roomId: room.id, date: currentDay })}
-                    variant="outline"
-                    className="w-full"
-                  >
-                    Reservar
-                  </Button>
-                </DialogTrigger>
-                <DialogContent className="sm:max-w-[425px]">
-                  <DialogHeader>
-                    <DialogTitle>Reservar Quirófano</DialogTitle>
-                    <DialogDescription>
-                      Complete los detalles de la cirugía para reservar el quirófano.
-                    </DialogDescription>
-                  </DialogHeader>
-                  <div className="grid gap-4 py-4">
-                    <div className="grid grid-cols-4 items-center gap-4">
-                      <Label htmlFor="surgeryType" className="text-right">
-                        Tipo de Cirugía
-                      </Label>
-                      <Input
-                        id="surgeryType"
-                        value={surgeryType}
-                        onChange={(e) => setSurgeryType(e.target.value)}
-                        className="col-span-3"
-                      />
-                    </div>
-                    <div className="grid grid-cols-4 items-center gap-4">
-                      <Label htmlFor="estimatedDuration" className="text-right">
-                        Duración Estimada (min)
-                      </Label>
-                      <Input
-                        id="estimatedDuration"
-                        type="number"
-                        value={estimatedDuration}
-                        onChange={(e) => setEstimatedDuration(e.target.value)}
-                        className="col-span-3"
-                      />
-                    </div>
-                  </div>
-                  <DialogFooter>
-                    <Button type="submit" onClick={handleBookRoom}>
-                      Confirmar Reserva
-                    </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
-            )}
-          </div>,
-        )
-        day = currentDay
-      }
-      return (
-        <div key={room.id} className="contents">
-          <div className="bg-gray-50 p-4 font-medium border-b border-r">{room.name}</div>
-          {cells}
-        </div>
-      )
-    })
-
-    return (
-      <div className="grid grid-cols-[auto_1fr_1fr_1fr_1fr_1fr_1fr_1fr] divide-x">
-        <div className="bg-gray-50 p-4 font-semibold border-b border-r">Quirófano</div>
-        {Array.from({ length: 7 }).map((_, i) => (
-          <div
-            key={i}
-            className={cn(
-              "bg-gray-50 p-4 font-semibold text-center border-b border-r",
-              isToday(addDays(startDate, i)) && "bg-primary/5",
-            )}
-          >
-            {format(addDays(startDate, i), "dd", { locale: es })}
-          </div>
-        ))}
-        {rows}
-      </div>
-    )
-  }
-
   return (
-    <div className="bg-white">
-      {renderHeader()}
-      <div className="border rounded-lg overflow-hidden">
-        {renderDays()}
-        {renderCells()}
+    <div className="bg-white p-4 rounded-lg shadow">
+      <NavButtons />
+      <div className="space-y-4">
+        <Calendar
+          mode="single"
+          selected={selectedDate}
+          onSelect={(date: Date | undefined) => date && handleDateSelect(date)}
+          locale={es}
+        />
+
+        <div>
+          <h2 className="text-lg font-semibold">
+            Turnos disponibles para el {format(selectedDate, "dd/MM/yyyy", { locale: es })}
+          </h2>
+          {availableShifts.length > 0 ? (
+            <ul className="mt-2 space-y-2">
+              {availableShifts.map((shift) => (
+                <li
+                  key={shift.id}
+                  className="p-3 bg-gray-100 rounded-md cursor-pointer hover:bg-gray-200"
+                  onClick={() => handleShiftSelect(shift)}
+                >
+                  {shift.startTime} - {shift.endTime} en {shift.operatingRoom}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p>No hay turnos disponibles para este día.</p>
+          )}
+        </div>
+
+        <Dialog open={isBookingDialogOpen} onOpenChange={setIsBookingDialogOpen}>
+          <DialogContent className="sm:max-w-[425px]">
+            <DialogHeader>
+              <DialogTitle>Confirmar Reserva</DialogTitle>
+              <DialogDescription>¿Está seguro de que desea reservar el turno seleccionado?</DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="surgery-type" className="text-right">
+                  Tipo de Cirugía
+                </Label>
+                <Select value={surgeryType} onValueChange={setSurgeryType}>
+                  <SelectTrigger className="col-span-3">
+                    <SelectValue placeholder="Seleccione el tipo de cirugía" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {surgeryTypes.map((type) => (
+                      <SelectItem key={type.id} value={type.id}>
+                        <div>
+                          <div>{type.name}</div>
+                          <div className="text-sm text-muted-foreground">{type.description}</div>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="estimated-duration" className="text-right">
+                  Duración Estimada (minutos)
+                </Label>
+                <Input
+                  type="number"
+                  id="estimated-duration"
+                  value={estimatedDuration}
+                  onChange={(e) => setEstimatedDuration(e.target.value)}
+                  className="col-span-3"
+                />
+              </div>
+
+              <div className="grid grid-cols-4 items-start gap-4">
+                <Label htmlFor="additional-notes" className="text-right mt-2">
+                  Notas Adicionales
+                </Label>
+                <Textarea
+                  id="additional-notes"
+                  value={additionalNotes}
+                  onChange={(e) => setAdditionalNotes(e.target.value)}
+                  className="col-span-3"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="secondary" onClick={handleCloseDialog}>
+                Cancelar
+              </Button>
+              <Button type="submit" onClick={handleBookShift}>
+                Reservar
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   )

@@ -76,10 +76,12 @@ const AssignedSurgeries = ({ isSurgeon = false }: AssignedSurgeriesProps) => {
             }
 
             try {
-              const [surgeonDoc, neurophysiologistDoc, hospitalDoc] = await Promise.all([
+              // Fetch all related data in parallel
+              const [surgeonDoc, neurophysiologistDoc, hospitalDoc, shiftDoc] = await Promise.all([
                 getDoc(doc(db, "users", surgeryData.surgeonId)),
                 getDoc(doc(db, "users", surgeryData.neurophysiologistId)),
                 getDoc(doc(db, "hospitals", surgeryData.hospitalId)),
+                surgeryData.shiftId ? getDoc(doc(db, "shifts", surgeryData.shiftId)) : null,
               ])
 
               const missingDocs = []
@@ -87,24 +89,24 @@ const AssignedSurgeries = ({ isSurgeon = false }: AssignedSurgeriesProps) => {
               if (!neurophysiologistDoc.exists()) missingDocs.push("neurophysiologist")
               if (!hospitalDoc.exists()) missingDocs.push("hospital")
 
+              // Get hospital data from shift if not directly available
+              let hospitalData = hospitalDoc.exists() ? hospitalDoc.data() : null
+              if (!hospitalData && shiftDoc?.exists()) {
+                const shiftHospitalDoc = await getDoc(doc(db, "hospitals", shiftDoc.data().hospitalId))
+                if (shiftHospitalDoc.exists()) {
+                  hospitalData = shiftHospitalDoc.data()
+                }
+              }
+
               if (missingDocs.length > 0) {
                 console.warn(`Missing related document(s) for surgery ${surgeryDoc.id}: ${missingDocs.join(", ")}`)
               }
 
               return {
                 id: surgeryDoc.id,
-                shiftId: surgeryData.shiftId,
-                surgeonId: surgeryData.surgeonId,
-                neurophysiologistId: surgeryData.neurophysiologistId,
-                type: surgeryData.type,
-                duration: surgeryData.duration,
+                ...surgeryData,
                 date: surgeryData.date.toDate(),
                 surgeryType,
-                estimatedDuration: surgeryData.estimatedDuration,
-                additionalNotes: surgeryData.additionalNotes,
-                status: surgeryData.status,
-                hospitalId: surgeryData.hospitalId,
-                materials: surgeryData.materials || [],
                 surgeon: {
                   id: surgeryData.surgeonId,
                   name: surgeonDoc.exists() ? surgeonDoc.data()?.name : "Unknown",
@@ -114,9 +116,10 @@ const AssignedSurgeries = ({ isSurgeon = false }: AssignedSurgeriesProps) => {
                   name: neurophysiologistDoc.exists() ? neurophysiologistDoc.data()?.name : "Unknown",
                 },
                 hospital: {
-                  id: surgeryData.hospitalId,
-                  name: hospitalDoc.exists() ? hospitalDoc.data()?.name : "Unknown",
+                  id: hospitalData?.id || surgeryData.hospitalId,
+                  name: hospitalData?.name || "Hospital no encontrado",
                 },
+                materials: surgeryData.materials || [],
                 hasMissingData: missingDocs.length > 0,
               } as Surgery
             } catch (error) {
@@ -240,10 +243,10 @@ const AssignedSurgeries = ({ isSurgeon = false }: AssignedSurgeriesProps) => {
                 </p>
               )}
               <p>
-                <strong>Surgeon:</strong> {surgery.surgeon.name}
+                <strong>Cirujano:</strong> {surgery.surgeon.name}
               </p>
               <p>
-                <strong>Neurophysiologist:</strong> {surgery.neurophysiologist.name}
+                <strong>Neurofisiólogo:</strong> {surgery.neurophysiologist.name}
               </p>
               <p>
                 <strong>Hospital:</strong> {surgery.hospital.name}

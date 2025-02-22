@@ -3,7 +3,7 @@
 import React from "react"
 import { useState, useEffect, useCallback } from "react"
 import { useAuth } from "@/app/context/AuthContext"
-import { Calendar } from "@/components/ui/calendar"
+import { Calendar } from "@/components/ui/calendar-full"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { addDoc, collection, query, where, getDocs, Timestamp } from "firebase/firestore"

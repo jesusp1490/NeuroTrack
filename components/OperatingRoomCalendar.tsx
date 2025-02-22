@@ -26,8 +26,6 @@ import { NavButtons } from "@/components/ui/nav-buttons"
 import { serverTimestamp } from "firebase/firestore"
 import { surgeryTypes } from "@/lib/surgery-types"
 
-// Define the props for the component
-
 interface Shift {
   id: string
   date: string
@@ -37,6 +35,10 @@ interface Shift {
   neurophysiologistId: string
   booked: boolean
   surgeryId: string | null
+  type: "morning" | "afternoon"
+  neurophysiologist?: {
+    name: string
+  }
 }
 
 const OperatingRoomCalendar: React.FC = () => {
@@ -60,28 +62,43 @@ const OperatingRoomCalendar: React.FC = () => {
         collection(db, "shifts"),
         where("date", ">=", Timestamp.fromDate(start)),
         where("date", "<=", Timestamp.fromDate(end)),
-        where("booked", "==", false),
       )
 
       const shiftsSnapshot = await getDocs(shiftsQuery)
-      const shiftsList = shiftsSnapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-        date: format(doc.data().date.toDate(), "yyyy-MM-dd"),
-        startTime: doc.data().startTime,
-        endTime: doc.data().endTime,
-        operatingRoom: doc.data().operatingRoom,
-        neurophysiologistId: doc.data().neurophysiologistId,
-        booked: doc.data().booked,
-        surgeryId: doc.data().surgeryId || null,
-      })) as Shift[]
+      const shiftsWithNeurophysiologists = await Promise.all(
+        shiftsSnapshot.docs.map(async (shiftDoc) => {
+          const shiftData = shiftDoc.data()
+          // Fetch neurophysiologist data
+          const neurophysiologistDoc = await getDoc(doc(db, "users", shiftData.neurophysiologistId))
+          const neurophysiologistData = neurophysiologistDoc.data()
 
-      setAvailableShifts(shiftsList)
+          // Fetch booking status
+          const bookingsQuery = query(
+            collection(db, "surgeries"),
+            where("shiftId", "==", shiftDoc.id),
+            where("status", "==", "scheduled"),
+          )
+          const bookingsSnapshot = await getDocs(bookingsQuery)
+          const isBooked = !bookingsSnapshot.empty
+
+          return {
+            id: shiftDoc.id,
+            ...shiftData,
+            date: format(shiftData.date.toDate(), "yyyy-MM-dd"),
+            neurophysiologist: neurophysiologistDoc.exists()
+              ? { name: neurophysiologistData?.name || "Nombre no disponible" }
+              : { name: "Neurofisiólogo no encontrado" },
+            booked: isBooked,
+          }
+        }),
+      )
+
+      setAvailableShifts(shiftsWithNeurophysiologists as Shift[])
     } catch (error) {
       console.error("Error fetching shifts:", error)
       toast({
         title: "Error",
-        description: "Failed to fetch available shifts.",
+        description: "No se pudieron cargar los turnos disponibles.",
         variant: "destructive",
       })
     }
@@ -97,6 +114,14 @@ const OperatingRoomCalendar: React.FC = () => {
   }
 
   const handleShiftSelect = (shift: Shift) => {
+    if (shift.booked) {
+      toast({
+        title: "Turno no disponible",
+        description: "Este turno ya ha sido reservado.",
+        variant: "destructive",
+      })
+      return
+    }
     setSelectedShift(shift)
     setIsBookingDialogOpen(true)
   }
@@ -152,6 +177,17 @@ const OperatingRoomCalendar: React.FC = () => {
       const hospitalDoc = await getDoc(doc(db, "hospitals", selectedHospital))
       if (!hospitalDoc.exists()) {
         throw new Error("Hospital not found")
+      }
+
+      // Check if the shift is already booked
+      const bookingsQuery = query(
+        collection(db, "surgeries"),
+        where("shiftId", "==", selectedShift.id),
+        where("status", "==", "scheduled"),
+      )
+      const bookingsSnapshot = await getDocs(bookingsQuery)
+      if (!bookingsSnapshot.empty) {
+        throw new Error("This shift has already been booked")
       }
 
       const surgeryData = {
@@ -217,17 +253,29 @@ const OperatingRoomCalendar: React.FC = () => {
 
         <div>
           <h2 className="text-lg font-semibold">
-            Turnos disponibles para el {format(selectedDate, "dd/MM/yyyy", { locale: es })}
+            Turnos disponibles para el {format(selectedDate, "dd 'de' MMMM yyyy", { locale: es })}
           </h2>
           {availableShifts.length > 0 ? (
             <ul className="mt-2 space-y-2">
               {availableShifts.map((shift) => (
                 <li
                   key={shift.id}
-                  className="p-3 bg-gray-100 rounded-md cursor-pointer hover:bg-gray-200"
+                  className={`p-3 rounded-md cursor-pointer ${
+                    shift.booked ? "bg-gray-200 text-gray-500" : "bg-gray-100 hover:bg-gray-200"
+                  }`}
                   onClick={() => handleShiftSelect(shift)}
                 >
-                  {shift.startTime} - {shift.endTime} en {shift.operatingRoom}
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <span className="font-medium">
+                        {shift.type === "morning" ? "Mañana" : "Tarde"} ({shift.startTime} - {shift.endTime})
+                      </span>
+                      <p className="text-sm text-muted-foreground">Dr. {shift.neurophysiologist?.name}</p>
+                    </div>
+                    <span className="text-sm font-medium text-muted-foreground">
+                      {shift.operatingRoom} - {shift.booked ? "Reservado" : "Disponible"}
+                    </span>
+                  </div>
                 </li>
               ))}
             </ul>

@@ -1,7 +1,7 @@
 import { initializeApp, getApps } from "firebase/app"
 import { getFirestore } from "firebase/firestore"
 import { getAuth } from "firebase/auth"
-import { getMessaging } from "firebase/messaging"
+import type { Messaging } from "firebase/messaging"
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -17,7 +17,19 @@ const firebaseConfig = {
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApps()[0]
 const db = getFirestore(app)
 const auth = getAuth(app)
-const messaging = typeof window !== "undefined" ? getMessaging(app) : null
+
+let messaging: Messaging | null = null
+
+if (typeof window !== "undefined") {
+  import("firebase/messaging")
+    .then((module) => {
+      messaging = module.getMessaging(app)
+    })
+    .catch((err) => {
+      console.error("Error loading messaging module:", err)
+    })
+}
 
 export { db, auth, messaging }
+
 

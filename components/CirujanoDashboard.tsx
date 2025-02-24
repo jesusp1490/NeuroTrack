@@ -1,13 +1,18 @@
 "use client"
 
-import React from "react"
+import type React from "react"
+import { useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { WeekCalendar } from "@/components/WeekCalendar"
+import OperatingRoomCalendar from "@/components/OperatingRoomCalendar"
 import AssignedSurgeries from "@/components/AssignedSurgeries"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { CalendarDays, ClipboardList } from "lucide-react"
+import { Button } from "@/components/ui/button"
 
 const CirujanoDashboard: React.FC = () => {
+  const [calendarView, setCalendarView] = useState<"week" | "month">("week")
+
   return (
     <div className="container mx-auto p-6">
       <h1 className="text-3xl font-bold mb-6">Panel de Control - Cirujano</h1>
@@ -31,10 +36,24 @@ const CirujanoDashboard: React.FC = () => {
               <CardDescription>
                 Seleccione una fecha y horario disponible para programar una nueva cirugía
               </CardDescription>
+              <div className="flex justify-end space-x-2">
+                <Button
+                  variant={calendarView === "week" ? "default" : "outline"}
+                  onClick={() => setCalendarView("week")}
+                >
+                  Vista Semanal
+                </Button>
+                <Button
+                  variant={calendarView === "month" ? "default" : "outline"}
+                  onClick={() => setCalendarView("month")}
+                >
+                  Vista Mensual
+                </Button>
+              </div>
             </CardHeader>
             <CardContent className="p-0">
               <div className="h-[800px] border rounded-md">
-                <WeekCalendar />
+                {calendarView === "week" ? <WeekCalendar /> : <OperatingRoomCalendar />}
               </div>
             </CardContent>
           </Card>

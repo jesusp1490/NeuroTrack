@@ -6,7 +6,7 @@ import { messaging } from "@/lib/firebase"
 
 export default function NotificationHandler() {
   useEffect(() => {
-    if (messaging) {
+    if (typeof window !== "undefined" && messaging) {
       const unsubscribe = onMessage(messaging, (payload) => {
         console.log("Received foreground message:", payload)
         // You can customize how to display the notification here

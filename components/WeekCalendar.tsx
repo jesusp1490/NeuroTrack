@@ -1,10 +1,7 @@
 "use client"
 
-import { DocumentData, QueryDocumentSnapshot } from "firebase/firestore"
-import { useState } from "react"
-
-import * as React from "react"
-import { addDays, format, startOfWeek, isSameDay, addWeeks, subWeeks } from "date-fns"
+import { useState, useEffect, useCallback } from "react"
+import { addDays, format, startOfWeek, isSameDay, addWeeks, subWeeks, isWithinInterval, addMinutes } from "date-fns"
 import { es } from "date-fns/locale"
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -21,10 +18,11 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { useToast } from "@/components/ui/use-toast"
-import { collection, query, where, getDocs, Timestamp, addDoc, doc, getDoc, updateDoc } from "firebase/firestore"
-import { db } from "@/lib/firebase"
+import { collection, query, where, getDocs, addDoc, Timestamp, doc, getDoc, updateDoc } from "firebase/firestore"
+import { db, auth } from "@/lib/firebase"
 import { useAuth } from "@/app/context/AuthContext"
 import { surgeryTypes } from "@/lib/surgery-types"
+import { cn } from "@/lib/utils"
 
 interface Shift {
   id: string
@@ -41,14 +39,15 @@ interface Shift {
   }
 }
 
-interface NeurophysiologistData {
-  name: string
-  // Add other specific properties here
-}
-
-interface HospitalData {
-  name: string
-  // Add other specific properties here
+interface Surgery {
+  id: string
+  shiftId: string
+  date: Date
+  surgeonId: string
+  neurophysiologistId: string
+  surgeryType: string
+  estimatedDuration: number
+  status: string
 }
 
 const timeSlots = Array.from({ length: 24 }, (_, i) => `${i.toString().padStart(2, "0")}:00`)
@@ -56,80 +55,112 @@ const timeSlots = Array.from({ length: 24 }, (_, i) => `${i.toString().padStart(
 export function WeekCalendar() {
   const [currentDate, setCurrentDate] = useState(new Date())
   const [shifts, setShifts] = useState<Shift[]>([])
+  const [surgeries, setSurgeries] = useState<Surgery[]>([])
   const [selectedDate, setSelectedDate] = useState<Date | null>(null)
   const [isBookingDialogOpen, setIsBookingDialogOpen] = useState(false)
-  const [surgeryType, setSurgeryType] = useState<string>("")
   const [estimatedDuration, setEstimatedDuration] = useState("")
   const [additionalNotes, setAdditionalNotes] = useState("")
   const { user } = useAuth()
   const { toast } = useToast()
+  const [selectedShift, setSelectedShift] = useState<Shift | null>(null)
+  const [surgeryType, setSurgeryType] = useState<string | undefined>(undefined)
 
   const startDate = startOfWeek(currentDate, { locale: es })
 
-  const fetchShifts = React.useCallback(async () => {
-    if (!user) return
+  const fetchShiftsAndSurgeries = useCallback(async () => {
+    if (!auth.currentUser) {
+      console.log("User not authenticated")
+      toast({
+        title: "Error de autenticación",
+        description: "Por favor, inicie sesión para ver los turnos disponibles.",
+        variant: "destructive",
+      })
+      return
+    }
 
     try {
+      console.log("Fetching user data...")
+      const userDoc = await getDoc(doc(db, "users", auth.currentUser.uid))
+      if (!userDoc.exists()) {
+        throw new Error("User document does not exist")
+      }
+      const userData = userDoc.data()
+      console.log("User data:", userData)
+
+      if (userData.role !== "cirujano") {
+        throw new Error("No tiene permisos para ver los turnos disponibles.")
+      }
+
       const weekStart = startOfWeek(currentDate, { locale: es })
       const weekEnd = addDays(weekStart, 6)
 
+      console.log("Fetching shifts...")
       const shiftsQuery = query(
         collection(db, "shifts"),
         where("date", ">=", Timestamp.fromDate(weekStart)),
         where("date", "<=", Timestamp.fromDate(weekEnd)),
       )
 
-      const shiftsSnapshot = await getDocs(shiftsQuery)
-      const shiftsPromises = shiftsSnapshot.docs.map(async (shiftDoc: QueryDocumentSnapshot<DocumentData>) => {
-        const shiftData = shiftDoc.data()
+      console.log("Fetching surgeries...")
+      const surgeriesQuery = query(
+        collection(db, "surgeries"),
+        where("date", ">=", Timestamp.fromDate(weekStart)),
+        where("date", "<=", Timestamp.fromDate(weekEnd)),
+      )
 
-        // Fetch neurophysiologist data
-        let neuroData = null
-        if (shiftData.neurophysiologistId) {
-          const neuroDoc = await getDoc(doc(db, "users", shiftData.neurophysiologistId))
-          neuroData = neuroDoc.exists() ? (neuroDoc.data() as NeurophysiologistData) : null
-        }
+      const [shiftsSnapshot, surgeriesSnapshot] = await Promise.all([getDocs(shiftsQuery), getDocs(surgeriesQuery)])
 
-        // Fetch hospital data
-        let hospitalData = null
-        if (shiftData.hospitalId) {
+      console.log("Shifts fetched:", shiftsSnapshot.size)
+      console.log("Surgeries fetched:", surgeriesSnapshot.size)
+
+      const shiftsData = await Promise.all(
+        shiftsSnapshot.docs.map(async (shiftDoc) => {
+          const shiftData = shiftDoc.data()
+          const neurophysiologistDoc = await getDoc(doc(db, "users", shiftData.neurophysiologistId))
+          const neurophysiologistData = neurophysiologistDoc.data()
           const hospitalDoc = await getDoc(doc(db, "hospitals", shiftData.hospitalId))
-          hospitalData = hospitalDoc.exists() ? (hospitalDoc.data() as HospitalData) : null
-        }
+          const hospitalData = hospitalDoc.data()
 
-        return {
-          id: shiftDoc.id,
-          ...shiftData,
-          date: shiftData.date.toDate(),
-          neurophysiologist: neuroData ? { name: neuroData.name || "Nombre no disponible" } : undefined,
-          hospital: hospitalData ? { name: hospitalData.name || "Hospital no disponible" } : undefined,
-        }
-      })
+          return {
+            id: shiftDoc.id,
+            ...shiftData,
+            date: shiftData.date.toDate(),
+            neurophysiologist: neurophysiologistData ? { name: neurophysiologistData.name } : undefined,
+            hospital: hospitalData ? { name: hospitalData.name } : undefined,
+          } as Shift
+        }),
+      )
 
-      const shiftsData = await Promise.all(shiftsPromises)
-      setShifts(shiftsData as Shift[])
+      const surgeriesData = surgeriesSnapshot.docs.map((surgeryDoc) => ({
+        id: surgeryDoc.id,
+        ...surgeryDoc.data(),
+        date: surgeryDoc.data().date.toDate(),
+      })) as Surgery[]
+
+      setShifts(shiftsData)
+      setSurgeries(surgeriesData)
     } catch (error) {
-      console.error("Error fetching shifts:", error)
+      console.error("Error fetching shifts and surgeries:", error)
+      if (error instanceof Error) {
+        console.error("Error name:", error.name)
+        console.error("Error message:", error.message)
+        console.error("Error stack:", error.stack)
+      }
       toast({
         title: "Error",
-        description: "No se pudieron cargar los turnos disponibles",
+        description: error instanceof Error ? error.message : "No se pudieron cargar los turnos disponibles.",
         variant: "destructive",
       })
     }
-  }, [currentDate, user, toast])
+  }, [currentDate, toast])
 
-  React.useEffect(() => {
-    fetchShifts()
-  }, [fetchShifts])
+  useEffect(() => {
+    fetchShiftsAndSurgeries()
+  }, [fetchShiftsAndSurgeries])
 
   const handlePreviousWeek = () => setCurrentDate(subWeeks(currentDate, 1))
   const handleNextWeek = () => setCurrentDate(addWeeks(currentDate, 1))
   const handleToday = () => setCurrentDate(new Date())
-
-  const handleDateClick = (date: Date) => {
-    setSelectedDate(date)
-    setIsBookingDialogOpen(true)
-  }
 
   const handleNewSurgery = () => {
     setSelectedDate(new Date())
@@ -137,7 +168,7 @@ export function WeekCalendar() {
   }
 
   const handleBookSurgery = async () => {
-    if (!selectedDate || !user || !surgeryType || !estimatedDuration) {
+    if (!selectedShift || !user || !surgeryType || !estimatedDuration) {
       toast({
         title: "Error",
         description: "Por favor complete todos los campos requeridos",
@@ -147,36 +178,45 @@ export function WeekCalendar() {
     }
 
     try {
-      // Verify user and permissions
-      const userDoc = await getDoc(doc(db, "users", user.uid))
-      if (!userDoc.exists()) {
-        throw new Error("No se encontró el usuario en la base de datos")
-      }
-      const userData = userDoc.data()
-      if (userData.role !== "cirujano") {
-        throw new Error("No tiene permisos para realizar esta acción")
+      // Verify user authentication
+      if (!auth.currentUser) {
+        throw new Error("Usuario no autenticado")
       }
 
-      // Find available shift for the selected date
-      const availableShift = shifts.find((shift) => isSameDay(shift.date, selectedDate) && !shift.booked)
-
-      if (!availableShift) {
-        throw new Error("No hay turnos disponibles para la fecha seleccionada")
+      // Verify user role
+      const userDoc = await getDoc(doc(db, "users", auth.currentUser.uid))
+      if (!userDoc.exists() || userDoc.data().role !== "cirujano") {
+        throw new Error("No tiene permisos para programar cirugías")
       }
 
-      // Double-check if the shift is still available
-      const shiftDoc = await getDoc(doc(db, "shifts", availableShift.id))
-      if (!shiftDoc.exists() || shiftDoc.data().booked) {
-        throw new Error("El turno seleccionado ya no está disponible")
+      // Check for overlapping surgeries
+      const overlappingSurgeries = surgeries.filter(
+        (surgery) =>
+          isWithinInterval(selectedShift.date, {
+            start: surgery.date,
+            end: addDays(surgery.date, surgery.estimatedDuration / (24 * 60)),
+          }) ||
+          isWithinInterval(addDays(selectedShift.date, Number(estimatedDuration) / (24 * 60)), {
+            start: surgery.date,
+            end: addDays(surgery.date, surgery.estimatedDuration / (24 * 60)),
+          }),
+      )
+
+      if (overlappingSurgeries.length > 0) {
+        throw new Error("La cirugía se superpone con otra cirugía programada")
       }
+
+      // Create surgery document
+      const surgeryDate = new Date(selectedShift.date)
+      surgeryDate.setHours(selectedShift.type === "morning" ? 8 : 14, 0, 0, 0)
 
       const surgeryData = {
-        shiftId: availableShift.id,
-        hospitalId: availableShift.hospitalId,
-        date: Timestamp.fromDate(selectedDate),
-        surgeonId: user.uid,
-        neurophysiologistId: availableShift.neurophysiologistId,
-        surgeryType,
+        shiftId: selectedShift.id,
+        hospitalId: selectedShift.hospitalId,
+        date: Timestamp.fromDate(surgeryDate),
+        surgeonId: auth.currentUser.uid,
+        neurophysiologistId: selectedShift.neurophysiologistId,
+        surgeryType: surgeryType,
         estimatedDuration: Number(estimatedDuration),
         additionalNotes,
         status: "scheduled",
@@ -186,7 +226,7 @@ export function WeekCalendar() {
       const surgeryRef = await addDoc(collection(db, "surgeries"), surgeryData)
 
       // Update shift status
-      await updateDoc(doc(db, "shifts", availableShift.id), {
+      await updateDoc(doc(db, "shifts", selectedShift.id), {
         booked: true,
         surgeryId: surgeryRef.id,
       })
@@ -197,10 +237,10 @@ export function WeekCalendar() {
       })
 
       setIsBookingDialogOpen(false)
-      setSurgeryType("")
+      setSurgeryType(undefined)
       setEstimatedDuration("")
       setAdditionalNotes("")
-      fetchShifts()
+      fetchShiftsAndSurgeries()
     } catch (error) {
       console.error("Error booking surgery:", error)
       toast({
@@ -215,11 +255,12 @@ export function WeekCalendar() {
     if (shift.booked) {
       toast({
         title: "Turno no disponible",
-        description: "Este turno ya ha sido reservado.",
+        description: "Este turno ya está reservado y no puede ser modificado.",
         variant: "destructive",
       })
       return
     }
+    setSelectedShift(shift)
     setSelectedDate(shift.date)
     setIsBookingDialogOpen(true)
   }
@@ -260,6 +301,7 @@ export function WeekCalendar() {
         {Array.from({ length: 7 }).map((_, i) => {
           const date = addDays(startDate, i)
           const dayShifts = shifts.filter((shift) => isSameDay(shift.date, date))
+          const daySurgeries = surgeries.filter((surgery) => isSameDay(surgery.date, date))
 
           return (
             <div key={i} className="border-r">
@@ -269,28 +311,64 @@ export function WeekCalendar() {
               </div>
               <div className="relative">
                 {timeSlots.map((time) => (
-                  <div key={time} className="h-12 border-b" onClick={() => handleDateClick(date)} />
+                  <div key={time} className="h-12 border-b" />
                 ))}
-                {dayShifts.map((shift) => (
-                  <div
-                    key={shift.id}
-                    className={`absolute left-0 right-0 m-1 p-2 rounded-md text-sm ${
-                      shift.booked
-                        ? "bg-gray-100 text-gray-500 cursor-not-allowed"
-                        : "bg-blue-100 text-blue-700 cursor-pointer hover:bg-blue-200"
-                    }`}
-                    style={{
-                      top: `${(shift.type === "morning" ? 8 : 14) * 3}rem`,
-                      height: "6rem",
-                    }}
-                    onClick={() => handleShiftSelect(shift)}
-                  >
-                    <div className="font-medium">{shift.type === "morning" ? "Mañana" : "Tarde"}</div>
-                    {shift.neurophysiologist && <div className="text-xs">Dr. {shift.neurophysiologist.name}</div>}
-                    {shift.hospital && <div className="text-xs truncate">{shift.hospital.name}</div>}
-                    {shift.booked && <div className="text-xs font-semibold text-red-500">Reservado</div>}
-                  </div>
-                ))}
+                {dayShifts.map((shift) => {
+                  const shiftSurgery = daySurgeries.find((surgery) => surgery.shiftId === shift.id)
+                  const isBooked = shift.booked || Boolean(shiftSurgery)
+
+                  return (
+                    <div
+                      key={shift.id}
+                      className={cn(
+                        "absolute left-0 right-0 m-1 p-2 rounded-md text-sm",
+                        isBooked
+                          ? "bg-gray-200 text-gray-700 cursor-not-allowed"
+                          : "bg-blue-100 text-blue-700 cursor-pointer hover:bg-blue-200",
+                      )}
+                      style={{
+                        top: `${(shift.type === "morning" ? 8 : 14) * 3}rem`,
+                        height: "6rem",
+                      }}
+                      onClick={() => !isBooked && handleShiftSelect(shift)}
+                    >
+                      <div className="font-medium">{shift.type === "morning" ? "Mañana" : "Tarde"}</div>
+                      {shift.neurophysiologist && <div className="text-xs">Dr. {shift.neurophysiologist.name}</div>}
+                      {isBooked && <div className="text-xs font-semibold text-red-700">Cirugía Programada</div>}
+                    </div>
+                  )
+                })}
+                {daySurgeries
+                  .filter((surgery) => {
+                    const surgeryStartTime = new Date(surgery.date)
+                    const surgeryStartHour = surgeryStartTime.getHours()
+                    // Only show surgeries that start at valid shift times (8:00 or 14:00)
+                    return surgeryStartHour === 8 || surgeryStartHour === 14
+                  })
+                  .map((surgery) => {
+                    const surgeryStartTime = new Date(surgery.date)
+                    const surgeryStartHour = surgeryStartTime.getHours()
+                    const surgeryStartMinutes = surgeryStartTime.getMinutes()
+                    const surgeryType = surgeryTypes.find((t) => t.id === surgery.surgeryType)
+
+                    return (
+                      <div
+                        key={surgery.id}
+                        className="absolute left-0 right-0 m-1 p-2 rounded-md text-sm bg-gray-300 text-gray-800 pointer-events-none"
+                        style={{
+                          top: `${(surgeryStartHour * 60 + surgeryStartMinutes) / 5}rem`,
+                          height: `${surgery.estimatedDuration / 5}rem`,
+                        }}
+                      >
+                        <div className="font-medium">Cirugía programada</div>
+                        <div className="text-xs">{surgeryType?.name}</div>
+                        <div className="text-xs">
+                          {format(surgeryStartTime, "HH:mm")} -{" "}
+                          {format(addMinutes(surgeryStartTime, surgery.estimatedDuration), "HH:mm")}
+                        </div>
+                      </div>
+                    )
+                  })}
               </div>
             </div>
           )
@@ -309,7 +387,11 @@ export function WeekCalendar() {
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
               <Label htmlFor="surgery-type">Tipo de Cirugía</Label>
-              <Select value={surgeryType} onValueChange={setSurgeryType}>
+              <Select
+                onValueChange={(value) => {
+                  setSurgeryType(value)
+                }}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="Seleccione el tipo de cirugía" />
                 </SelectTrigger>

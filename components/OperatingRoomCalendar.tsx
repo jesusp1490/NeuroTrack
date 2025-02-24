@@ -46,17 +46,6 @@ interface Shift {
   hospital?: ShiftHospital
 }
 
-type ProcessedShift = {
-  id: string
-  date: Date
-  type: "morning" | "afternoon"
-  neurophysiologistId: string
-  hospitalId: string
-  booked: boolean
-  neurophysiologist?: ShiftNeurophysiologist
-  hospital?: ShiftHospital
-} | null
-
 const OperatingRoomCalendar: React.FC = () => {
   const [selectedDate, setSelectedDate] = useState<Date>(new Date())
   const [availableShifts, setAvailableShifts] = useState<Shift[]>([])
@@ -69,9 +58,26 @@ const OperatingRoomCalendar: React.FC = () => {
   const { toast } = useToast()
 
   const fetchAvailability = useCallback(async () => {
-    if (!user) return
+    if (!user) {
+      console.log("User not authenticated")
+      toast({
+        title: "Error de autenticación",
+        description: "Por favor, inicie sesión para ver los turnos disponibles.",
+        variant: "destructive",
+      })
+      return
+    }
 
     try {
+      const userDoc = await getDoc(doc(db, "users", user.uid))
+      if (!userDoc.exists()) {
+        throw new Error("Usuario no encontrado")
+      }
+      const userData = userDoc.data()
+      if (userData.role !== "cirujano") {
+        throw new Error("Acceso no autorizado. Se requiere rol de cirujano.")
+      }
+
       const start = startOfDay(selectedDate)
       const end = endOfDay(selectedDate)
 
@@ -113,7 +119,7 @@ const OperatingRoomCalendar: React.FC = () => {
           const bookingsSnapshot = await getDocs(bookingsQuery)
           const isBooked = !bookingsSnapshot.empty
 
-          const processedShift: ProcessedShift = {
+          const processedShift = {
             id: shiftDoc.id,
             date: shiftData.date.toDate(),
             type: shiftData.type,
@@ -140,15 +146,22 @@ const OperatingRoomCalendar: React.FC = () => {
       })
 
       const shiftsResults = await Promise.all(shiftsPromises)
-      const validShifts = shiftsResults.filter((shift): shift is Shift => shift !== null)
-      setAvailableShifts(validShifts)
+      const validShifts = shiftsResults.filter(
+        (shift): shift is Shift =>
+          shift !== null && shift.neurophysiologist !== undefined && shift.hospital !== undefined,
+      )
+      setAvailableShifts(validShifts as Shift[])
     } catch (error) {
       console.error("Error fetching shifts:", error)
       toast({
         title: "Error",
-        description: "No se pudieron cargar los turnos disponibles.",
+        description:
+          error instanceof Error
+            ? error.message
+            : "No se pudieron cargar los turnos disponibles. Verifique sus permisos.",
         variant: "destructive",
       })
+      setAvailableShifts([])
     }
   }, [selectedDate, user, toast])
 

@@ -8,7 +8,7 @@ import { collection, query, where, getDocs, addDoc, Timestamp, doc, updateDoc, g
 import { db } from "@/lib/firebase"
 import { useAuth } from "@/app/context/AuthContext"
 import { Button } from "@/components/ui/button"
-import { Calendar } from "@/components/ui/calendar-full"
+import { Calendar } from "@/components/ui/calendar"
 import {
   Dialog,
   DialogContent,
@@ -22,24 +22,40 @@ import { Label } from "@/components/ui/label"
 import { useToast } from "@/components/ui/use-toast"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { NavButtons } from "@/components/ui/nav-buttons"
-import { serverTimestamp } from "firebase/firestore"
+import { Card, CardContent } from "@/components/ui/card"
+import { Clock, User, Hospital } from "lucide-react"
 import { surgeryTypes } from "@/lib/surgery-types"
+import { serverTimestamp } from "firebase/firestore"
+
+interface ShiftNeurophysiologist {
+  name: string
+}
+
+interface ShiftHospital {
+  name: string
+}
 
 interface Shift {
   id: string
-  date: string
-  startTime: string
-  endTime: string
-  operatingRoom: string
-  neurophysiologistId: string
-  booked: boolean
-  surgeryId: string | null
+  date: Date
   type: "morning" | "afternoon"
-  neurophysiologist?: {
-    name: string
-  }
+  neurophysiologistId: string
+  hospitalId: string
+  booked: boolean
+  neurophysiologist?: ShiftNeurophysiologist
+  hospital?: ShiftHospital
 }
+
+type ProcessedShift = {
+  id: string
+  date: Date
+  type: "morning" | "afternoon"
+  neurophysiologistId: string
+  hospitalId: string
+  booked: boolean
+  neurophysiologist?: ShiftNeurophysiologist
+  hospital?: ShiftHospital
+} | null
 
 const OperatingRoomCalendar: React.FC = () => {
   const [selectedDate, setSelectedDate] = useState<Date>(new Date())
@@ -49,11 +65,12 @@ const OperatingRoomCalendar: React.FC = () => {
   const [surgeryType, setSurgeryType] = useState<string | undefined>(undefined)
   const [estimatedDuration, setEstimatedDuration] = useState<string>("")
   const [additionalNotes, setAdditionalNotes] = useState<string>("")
-  const [selectedHospital] = useState<string>("Hospital ABC") // Default value
   const { user } = useAuth()
   const { toast } = useToast()
 
   const fetchAvailability = useCallback(async () => {
+    if (!user) return
+
     try {
       const start = startOfDay(selectedDate)
       const end = endOfDay(selectedDate)
@@ -65,14 +82,29 @@ const OperatingRoomCalendar: React.FC = () => {
       )
 
       const shiftsSnapshot = await getDocs(shiftsQuery)
-      const shiftsWithNeurophysiologists = await Promise.all(
-        shiftsSnapshot.docs.map(async (shiftDoc) => {
-          const shiftData = shiftDoc.data()
-          // Fetch neurophysiologist data
-          const neurophysiologistDoc = await getDoc(doc(db, "users", shiftData.neurophysiologistId))
-          const neurophysiologistData = neurophysiologistDoc.data()
+      const shiftsPromises = shiftsSnapshot.docs.map(async (shiftDoc) => {
+        const shiftData = shiftDoc.data()
 
-          // Fetch booking status
+        try {
+          // Fetch neurophysiologist data
+          let neurophysiologistData = null
+          if (shiftData.neurophysiologistId) {
+            const neurophysiologistDoc = await getDoc(doc(db, "users", shiftData.neurophysiologistId))
+            if (neurophysiologistDoc.exists()) {
+              neurophysiologistData = neurophysiologistDoc.data()
+            }
+          }
+
+          // Fetch hospital data
+          let hospitalData = null
+          if (shiftData.hospitalId) {
+            const hospitalDoc = await getDoc(doc(db, "hospitals", shiftData.hospitalId))
+            if (hospitalDoc.exists()) {
+              hospitalData = hospitalDoc.data()
+            }
+          }
+
+          // Check if shift is booked
           const bookingsQuery = query(
             collection(db, "surgeries"),
             where("shiftId", "==", shiftDoc.id),
@@ -81,19 +113,35 @@ const OperatingRoomCalendar: React.FC = () => {
           const bookingsSnapshot = await getDocs(bookingsQuery)
           const isBooked = !bookingsSnapshot.empty
 
-          return {
+          const processedShift: ProcessedShift = {
             id: shiftDoc.id,
-            ...shiftData,
-            date: format(shiftData.date.toDate(), "yyyy-MM-dd"),
-            neurophysiologist: neurophysiologistDoc.exists()
-              ? { name: neurophysiologistData?.name || "Nombre no disponible" }
-              : { name: "Neurofisiólogo no encontrado" },
+            date: shiftData.date.toDate(),
+            type: shiftData.type,
+            neurophysiologistId: shiftData.neurophysiologistId,
+            hospitalId: shiftData.hospitalId,
             booked: isBooked,
+            ...(neurophysiologistData && {
+              neurophysiologist: {
+                name: neurophysiologistData.name || "Nombre no disponible",
+              },
+            }),
+            ...(hospitalData && {
+              hospital: {
+                name: hospitalData.name || "Hospital no disponible",
+              },
+            }),
           }
-        }),
-      )
 
-      setAvailableShifts(shiftsWithNeurophysiologists as Shift[])
+          return processedShift
+        } catch (error) {
+          console.error(`Error processing shift ${shiftDoc.id}:`, error)
+          return null
+        }
+      })
+
+      const shiftsResults = await Promise.all(shiftsPromises)
+      const validShifts = shiftsResults.filter((shift): shift is Shift => shift !== null)
+      setAvailableShifts(validShifts)
     } catch (error) {
       console.error("Error fetching shifts:", error)
       toast({
@@ -102,15 +150,17 @@ const OperatingRoomCalendar: React.FC = () => {
         variant: "destructive",
       })
     }
-  }, [selectedDate, toast])
+  }, [selectedDate, user, toast])
 
   useEffect(() => {
     fetchAvailability()
   }, [fetchAvailability])
 
-  const handleDateSelect = (date: Date) => {
-    setSelectedDate(date)
-    setSelectedShift(null)
+  const handleDateSelect = (date: Date | undefined) => {
+    if (date) {
+      setSelectedDate(date)
+      setSelectedShift(null)
+    }
   }
 
   const handleShiftSelect = (shift: Shift) => {
@@ -126,14 +176,6 @@ const OperatingRoomCalendar: React.FC = () => {
     setIsBookingDialogOpen(true)
   }
 
-  const handleCloseDialog = () => {
-    setIsBookingDialogOpen(false)
-    setSelectedShift(null)
-    setSurgeryType(undefined)
-    setEstimatedDuration("")
-    setAdditionalNotes("")
-  }
-
   const handleBookShift = async () => {
     if (!selectedShift || !user || !surgeryType || !estimatedDuration) {
       toast({
@@ -145,60 +187,58 @@ const OperatingRoomCalendar: React.FC = () => {
     }
 
     try {
-      // Check user authentication
-      if (!user.uid) {
-        throw new Error("User is not authenticated")
-      }
-
-      // Fetch user data to verify role
+      // Verify user and permissions
       const userDoc = await getDoc(doc(db, "users", user.uid))
       if (!userDoc.exists()) {
-        throw new Error("User document not found")
+        throw new Error("No se encontró el usuario en la base de datos")
       }
       const userData = userDoc.data()
-      console.log("User data:", userData)
-
       if (userData.role !== "cirujano") {
-        throw new Error(`User does not have cirujano role. Current role: ${userData.role}`)
+        throw new Error("No tiene permisos para realizar esta acción. Se requiere rol de cirujano.")
       }
 
+      // Verify surgery type exists
       const selectedSurgeryType = surgeryTypes.find((type) => type.id === surgeryType)
       if (!selectedSurgeryType) {
-        throw new Error("Invalid surgery type")
+        throw new Error("Tipo de cirugía inválido")
       }
 
-      // Verify that the neurophysiologist exists
-      const neurophysiologistDoc = await getDoc(doc(db, "users", selectedShift.neurophysiologistId))
-      if (!neurophysiologistDoc.exists()) {
-        throw new Error("Neurophysiologist not found")
+      // Fetch the shift data to ensure we have the correct hospitalId
+      const shiftDoc = await getDoc(doc(db, "shifts", selectedShift.id))
+      if (!shiftDoc.exists()) {
+        throw new Error("El turno seleccionado ya no existe")
+      }
+      const shiftData = shiftDoc.data()
+
+      // Try to get hospitalId from various sources
+      let hospitalId = shiftData.hospitalId || selectedShift.hospitalId
+
+      if (!hospitalId) {
+        // If hospitalId is still not found, try to get it from the neurophysiologist's data
+        if (shiftData.neurophysiologistId) {
+          const neuroDoc = await getDoc(doc(db, "users", shiftData.neurophysiologistId))
+          if (neuroDoc.exists()) {
+            hospitalId = neuroDoc.data().hospitalId
+          }
+        }
       }
 
-      // Verify that the hospital exists
-      const hospitalDoc = await getDoc(doc(db, "hospitals", selectedHospital))
-      if (!hospitalDoc.exists()) {
-        throw new Error("Hospital not found")
+      if (!hospitalId) {
+        console.error("Shift data:", shiftData)
+        console.error("Selected shift:", selectedShift)
+        throw new Error("No se pudo determinar el hospital para este turno. Por favor, contacte al administrador.")
       }
 
-      // Check if the shift is already booked
-      const bookingsQuery = query(
-        collection(db, "surgeries"),
-        where("shiftId", "==", selectedShift.id),
-        where("status", "==", "scheduled"),
-      )
-      const bookingsSnapshot = await getDocs(bookingsQuery)
-      if (!bookingsSnapshot.empty) {
-        throw new Error("This shift has already been booked")
-      }
-
+      // Create surgery document
       const surgeryData = {
         shiftId: selectedShift.id,
-        hospitalId: selectedHospital,
+        hospitalId: hospitalId,
         date: Timestamp.fromDate(selectedDate),
         surgeonId: user.uid,
-        neurophysiologistId: selectedShift.neurophysiologistId,
+        neurophysiologistId: shiftData.neurophysiologistId || selectedShift.neurophysiologistId,
         surgeryType: surgeryType,
         estimatedDuration: Number(estimatedDuration),
-        additionalNotes: additionalNotes || "",
+        additionalNotes: additionalNotes,
         status: "scheduled",
         createdAt: serverTimestamp(),
         materials: selectedSurgeryType.defaultMaterials,
@@ -208,8 +248,7 @@ const OperatingRoomCalendar: React.FC = () => {
 
       const surgeryRef = await addDoc(collection(db, "surgeries"), surgeryData)
 
-      console.log("Surgery created successfully with ID:", surgeryRef.id)
-
+      // Update shift status
       await updateDoc(doc(db, "shifts", selectedShift.id), {
         booked: true,
         surgeryId: surgeryRef.id,
@@ -217,137 +256,147 @@ const OperatingRoomCalendar: React.FC = () => {
 
       toast({
         title: "Éxito",
-        description: "Reserva realizada correctamente",
+        description: "Cirugía programada correctamente",
       })
 
+      // Reset form
+      setIsBookingDialogOpen(false)
       setSelectedShift(null)
-      setSurgeryType("")
+      setSurgeryType(undefined)
       setEstimatedDuration("")
       setAdditionalNotes("")
 
+      // Refresh available shifts
       await fetchAvailability()
-    } catch (error: unknown) {
+    } catch (error) {
       console.error("Error booking surgery:", error)
-      let errorMessage = "Error desconocido al realizar la reserva."
-      if (error instanceof Error) {
-        errorMessage = error.message
-      }
       toast({
         title: "Error",
-        description: `Error al realizar la reserva: ${errorMessage}`,
+        description: error instanceof Error ? error.message : "Error al programar la cirugía",
         variant: "destructive",
       })
     }
   }
 
   return (
-    <div className="bg-white p-4 rounded-lg shadow">
-      <NavButtons />
-      <div className="space-y-4">
-        <Calendar
-          mode="single"
-          selected={selectedDate}
-          onSelect={(date: Date | undefined) => date && handleDateSelect(date)}
-          locale={es}
-        />
+    <div className="space-y-6">
+      <div className="grid md:grid-cols-[400px,1fr] gap-6">
+        <Card className="bg-background">
+          <CardContent className="p-4">
+            <Calendar
+              mode="single"
+              selected={selectedDate}
+              onSelect={handleDateSelect}
+              locale={es}
+              className="rounded-md border w-full"
+            />
+          </CardContent>
+        </Card>
 
-        <div>
-          <h2 className="text-lg font-semibold">
-            Turnos disponibles para el {format(selectedDate, "dd 'de' MMMM yyyy", { locale: es })}
-          </h2>
-          {availableShifts.length > 0 ? (
-            <ul className="mt-2 space-y-2">
-              {availableShifts.map((shift) => (
-                <li
-                  key={shift.id}
-                  className={`p-3 rounded-md cursor-pointer ${
-                    shift.booked ? "bg-gray-200 text-gray-500" : "bg-gray-100 hover:bg-gray-200"
-                  }`}
-                  onClick={() => handleShiftSelect(shift)}
-                >
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <span className="font-medium">
-                        {shift.type === "morning" ? "Mañana" : "Tarde"} ({shift.startTime} - {shift.endTime})
-                      </span>
-                      <p className="text-sm text-muted-foreground">Dr. {shift.neurophysiologist?.name}</p>
-                    </div>
-                    <span className="text-sm font-medium text-muted-foreground">
-                      {shift.operatingRoom} - {shift.booked ? "Reservado" : "Disponible"}
-                    </span>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p>No hay turnos disponibles para este día.</p>
-          )}
-        </div>
-
-        <Dialog open={isBookingDialogOpen} onOpenChange={setIsBookingDialogOpen}>
-          <DialogContent className="sm:max-w-[425px]">
-            <DialogHeader>
-              <DialogTitle>Confirmar Reserva</DialogTitle>
-              <DialogDescription>¿Está seguro de que desea reservar el turno seleccionado?</DialogDescription>
-            </DialogHeader>
-            <div className="grid gap-4 py-4">
-              <div className="grid grid-cols-4 items-center gap-4">
-                <Label htmlFor="surgery-type" className="text-right">
-                  Tipo de Cirugía
-                </Label>
-                <Select value={surgeryType} onValueChange={setSurgeryType}>
-                  <SelectTrigger className="col-span-3">
-                    <SelectValue placeholder="Seleccione el tipo de cirugía" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {surgeryTypes.map((type) => (
-                      <SelectItem key={type.id} value={type.id}>
-                        <div>
-                          <div>{type.name}</div>
-                          <div className="text-sm text-muted-foreground">{type.description}</div>
+        <Card>
+          <CardContent className="p-4">
+            <h3 className="text-lg font-semibold mb-4">
+              Turnos disponibles para el {format(selectedDate, "EEEE d 'de' MMMM yyyy", { locale: es })}
+            </h3>
+            <div className="grid gap-4">
+              {availableShifts.length > 0 ? (
+                availableShifts.map((shift) => (
+                  <div
+                    key={shift.id}
+                    className={`p-4 rounded-lg border transition-colors ${
+                      shift.booked
+                        ? "bg-gray-50 border-gray-200 cursor-not-allowed"
+                        : "bg-white border-gray-200 hover:border-primary cursor-pointer"
+                    }`}
+                    onClick={() => !shift.booked && handleShiftSelect(shift)}
+                  >
+                    <div className="grid gap-2">
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Clock className="h-4 w-4" />
+                        <span>{shift.type === "morning" ? "Mañana" : "Tarde"}</span>
+                      </div>
+                      {shift.neurophysiologist && (
+                        <div className="flex items-center gap-2 text-sm">
+                          <User className="h-4 w-4" />
+                          <span>Dr. {shift.neurophysiologist.name}</span>
                         </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="grid grid-cols-4 items-center gap-4">
-                <Label htmlFor="estimated-duration" className="text-right">
-                  Duración Estimada (minutos)
-                </Label>
-                <Input
-                  type="number"
-                  id="estimated-duration"
-                  value={estimatedDuration}
-                  onChange={(e) => setEstimatedDuration(e.target.value)}
-                  className="col-span-3"
-                />
-              </div>
-
-              <div className="grid grid-cols-4 items-start gap-4">
-                <Label htmlFor="additional-notes" className="text-right mt-2">
-                  Notas Adicionales
-                </Label>
-                <Textarea
-                  id="additional-notes"
-                  value={additionalNotes}
-                  onChange={(e) => setAdditionalNotes(e.target.value)}
-                  className="col-span-3"
-                />
-              </div>
+                      )}
+                      {shift.hospital && (
+                        <div className="flex items-center gap-2 text-sm">
+                          <Hospital className="h-4 w-4" />
+                          <span>{shift.hospital.name}</span>
+                        </div>
+                      )}
+                      {shift.booked && (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                          No disponible
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="text-center py-8 text-muted-foreground">No hay turnos disponibles para este día</div>
+              )}
             </div>
-            <DialogFooter>
-              <Button type="button" variant="secondary" onClick={handleCloseDialog}>
-                Cancelar
-              </Button>
-              <Button type="submit" onClick={handleBookShift}>
-                Reservar
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+          </CardContent>
+        </Card>
       </div>
+
+      <Dialog open={isBookingDialogOpen} onOpenChange={setIsBookingDialogOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Programar Cirugía</DialogTitle>
+            <DialogDescription>Complete los detalles de la cirugía para el turno seleccionado</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="surgery-type">Tipo de Cirugía</Label>
+              <Select value={surgeryType} onValueChange={setSurgeryType}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Seleccione el tipo de cirugía" />
+                </SelectTrigger>
+                <SelectContent>
+                  {surgeryTypes.map((type) => (
+                    <SelectItem key={type.id} value={type.id}>
+                      <div className="flex flex-col">
+                        <span className="font-medium">{type.name}</span>
+                        <span className="text-xs text-muted-foreground">{type.description}</span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="estimated-duration">Duración Estimada (minutos)</Label>
+              <Input
+                type="number"
+                id="estimated-duration"
+                value={estimatedDuration}
+                onChange={(e) => setEstimatedDuration(e.target.value)}
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="additional-notes">Notas Adicionales</Label>
+              <Textarea
+                id="additional-notes"
+                value={additionalNotes}
+                onChange={(e) => setAdditionalNotes(e.target.value)}
+                placeholder="Agregue cualquier información adicional relevante"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsBookingDialogOpen(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={handleBookShift}>Programar Cirugía</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

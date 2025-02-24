@@ -1,9 +1,9 @@
 "use client"
 
 import "react-day-picker/dist/style.css"
-import * as React from "react"
+import type * as React from "react"
 import { ChevronLeft, ChevronRight } from "lucide-react"
-import { DayPicker, NavProps } from "react-day-picker"
+import { DayPicker, type NavProps } from "react-day-picker"
 import { es } from "date-fns/locale"
 import { buttonVariants } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -52,10 +52,10 @@ function Calendar({ className, classNames, showOutsideDays = true, ...props }: C
         nav_button_next: "absolute right-1",
         table: "w-full border-collapse space-y-1",
         head_row: "flex",
-        head_cell: "text-muted-foreground rounded-md w-9 font-normal text-[0.8rem]",
+        head_cell: "w-[12%] text-center text-muted-foreground text-sm font-medium",
         row: "flex w-full mt-2",
-        cell: "h-9 w-9 text-center text-sm p-0 relative [&:has([aria-selected])]:bg-accent first:[&:has([aria-selected])]:rounded-l-md last:[&:has([aria-selected])]:rounded-r-md focus-within:relative focus-within:z-20",
-        day: cn(buttonVariants({ variant: "ghost" }), "h-9 w-9 p-0 font-normal aria-selected:opacity-100"),
+        cell: "w-[14.28%] text-center relative p-0 focus-within:relative focus-within:z-20",
+        day: "h-9 w-9 p-0 font-normal aria-selected:opacity-100",
         day_selected:
           "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground focus:bg-primary focus:text-primary-foreground",
         day_today: "bg-accent text-accent-foreground",

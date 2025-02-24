@@ -36,20 +36,6 @@ const NeurofisiologoShiftManager: React.FC = () => {
   const [hospitals, setHospitals] = useState<Hospital[]>([])
   const [existingShifts, setExistingShifts] = useState<Shift[]>([])
 
-  useEffect(() => {
-    if (user) {
-      fetchHospitals()
-      fetchExistingShifts()
-    }
-  }, [user])
-
-  const fetchHospitals = async () => {
-    const hospitalsRef = collection(db, "hospitals")
-    const snapshot = await getDocs(hospitalsRef)
-    const hospitalsList = snapshot.docs.map((doc) => ({ id: doc.id, name: doc.data().name }))
-    setHospitals(hospitalsList)
-  }
-
   const fetchExistingShifts = useCallback(async () => {
     if (!user) return
     const shiftsRef = collection(db, "shifts")
@@ -63,6 +49,20 @@ const NeurofisiologoShiftManager: React.FC = () => {
     console.log("Fetched shifts:", shifts) // Debug log
     setExistingShifts(shifts)
   }, [user])
+
+  useEffect(() => {
+    if (user) {
+      fetchHospitals()
+      fetchExistingShifts()
+    }
+  }, [user, fetchExistingShifts])
+
+  const fetchHospitals = async () => {
+    const hospitalsRef = collection(db, "hospitals")
+    const snapshot = await getDocs(hospitalsRef)
+    const hospitalsList = snapshot.docs.map((doc) => ({ id: doc.id, name: doc.data().name }))
+    setHospitals(hospitalsList)
+  }
 
   const handleSetShift = async () => {
     if (!user || !selectedDate || !shiftType || !selectedHospital) {
